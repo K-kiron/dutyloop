@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "mission": "Own the ongoing usability and reliability of this project. Inspect current evidence, choose useful work, implement and verify one task, then discover the next task until stopped or limited.",
+  "project": "/absolute/path/to/your/repository",
+  "allowed_paths": ["src", "tests", "docs"],
+  "constraints": [
+    "Preserve documented public behavior unless a change is explicitly required by this mission.",
+    "Do not change credentials, dependencies, CI, security policy, or deployment configuration.",
+    "Prefer work supported by reproducible defects or concrete user-facing evidence."
+  ],
+  "kinds": ["feature", "bugfix", "qa", "docs"],
+  "research_domains": [],
+  "verification": [
+    ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
+  ],
+  "driver": {"name": "codex", "model": null},
+  "team": {"discovery_workers": 1},
+  "limits": {"max_invocations": 12, "max_wall_seconds": 1800},
+  "poll_seconds": 60,
+  "max_task_attempts": 2,
+  "max_failures": 3,
+  "branch": "work/project-maintenance"
+}

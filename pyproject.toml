@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dutyloop"
+version = "0.1.0"
+description = "Persistent project agents that discover, implement and verify work under explicit limits"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Wenhao XU"}]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.20,<2"]
+dev = ["pytest>=8", "build>=1"]
+
+[project.scripts]
+dutyloop = "dutyloop.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/K-kiron/dutyloop"
+Issues = "https://github.com/K-kiron/dutyloop/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
