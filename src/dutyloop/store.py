@@ -85,6 +85,39 @@ class Store:
         with self.connection() as db:
             db.execute("INSERT INTO events(at,kind,data) VALUES(?,?,?)", (time.time(), kind, json.dumps(data)))
 
+    def events(self, after_id=0, limit=20):
+        """Read a bounded, stable audit page; the last ID is the next cursor."""
+        if type(after_id) is not int or after_id < 0 or type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("after_id must be a nonnegative integer and limit must be 1..1000")
+        if not self.path.is_file():
+            raise ValueError(f"No mission exists in {self.directory}")
+        with self.connection() as db:
+            self._read(db)
+            return [{"id": row["id"], "at": row["at"], "kind": row["kind"], "data": json.loads(row["data"])}
+                    for row in db.execute("SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?", (after_id, limit))]
+
+    def available_calls(self):
+        data = self.control()
+        return max(0, data["spec"]["limits"]["max_invocations"] - data["invocations"])
+
+    def require_calls(self, count):
+        """Admit a task only when its mandatory implementation and review fit.
+
+        This does not precharge calls; the single supervisor owns task dispatch,
+        and every actual invocation still requires an atomic reservation.
+        """
+        with self.connection() as db:
+            data = self._read(db)
+            if data["stop_requested"] or data["status"] in {"limited", "blocked", "stopped"}:
+                return False
+            reason = ("wall_time_limit" if data["deadline"] is not None and time.time() >= data["deadline"] else
+                      "insufficient_task_budget" if data["spec"]["limits"]["max_invocations"] - data["invocations"] < count else None)
+            if reason:
+                data.update(status="limited", reason=reason)
+                self._save(db, data)
+                return False
+            return True
+
     def set_status(self, status, reason=None, **fields):
         with self.connection() as db:
             data = self._read(db)
@@ -129,13 +162,13 @@ class Store:
             self._save(db, data)
             return cursor.lastrowid
 
-    def finish_call(self, call_id, result):
+    def finish_call(self, call_id, result, *, unknown=False):
         with self.connection() as db:
             row = db.execute("SELECT state,data FROM calls WHERE id=?", (call_id,)).fetchone()
             if row is None or row["state"] not in {"reserved", "running"}:
                 raise RuntimeError("Call was already settled or is unknown")
             data = {**json.loads(row["data"]), **result, "finished_at": time.time()}
-            db.execute("UPDATE calls SET state='finished',data=? WHERE id=?", (json.dumps(data), call_id))
+            db.execute("UPDATE calls SET state=?,data=? WHERE id=?", ("unknown" if unknown else "finished", json.dumps(data), call_id))
 
     def has_unfinished_calls(self):
         with self.connection() as db:
@@ -152,7 +185,21 @@ class Store:
             db.execute("UPDATE calls SET state='unknown' WHERE state IN ('reserved','running')")
             db.execute("UPDATE tasks SET state='unknown' WHERE state IN ('running','verifying')")
             data = self._read(db)
-            data.update(status="stopped" if data["stop_requested"] else "ready", runner_pid=None, reason="recovered_unknown_work")
+            if data["stop_requested"] or data["status"] == "stopped":
+                data.update(status="stopped", reason="operator_stop")
+            elif data["status"] == "limited":
+                pass  # An acknowledgement cannot grant a fresh budget or deadline.
+            elif data["invocations"] >= data["spec"]["limits"]["max_invocations"]:
+                data.update(status="limited", reason="invocation_limit")
+            elif data["deadline"] is not None and time.time() >= data["deadline"]:
+                data.update(status="limited", reason="wall_time_limit")
+            elif data["status"] == "blocked" and data["reason"] not in {
+                "unclean_interruption", "supervisor_interrupted", "worker_cleanup_unconfirmed", "verification_cleanup_unconfirmed", "git_cleanup_unconfirmed",
+            }:
+                pass  # Scope violations, driver errors and exhausted retries remain terminal.
+            else:
+                data.update(status="ready", reason="recovered_unknown_work")
+            data["runner_pid"] = None
             self._save(db, data)
 
     def add_task(self, candidate, workspace, base):
@@ -191,7 +238,7 @@ class Store:
         with self.connection() as db:
             data = self._read(db)
             data["failures"] += 1
-            if data["failures"] >= data["spec"]["max_failures"]:
+            if data["failures"] >= data["spec"]["max_failures"] and data["status"] not in {"limited", "blocked", "stopped"}:
                 data.update(status="blocked", reason=reason)
             self._save(db, data)
 

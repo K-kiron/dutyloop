@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible DutyLoop failure or host compatibility problem.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a minimal reproduction, not a private mission state directory. Remove credentials, private code, prompts and account details. Do not post secrets or sensitive exploit details in public issues.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+      description: Describe what you expected, what happened, and the mission status/reason.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Commands and a minimal sanitized spec or fixture. Note whether the driver was simulated or authenticated.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Environment
+      description: DutyLoop version/ref, OS, Python, Git, host CLI version, and model if relevant. Never include a token.
+      placeholder: |
+        DutyLoop:
+        OS / Python / Git:
+        Host CLI / version:
+        Model (if applicable):
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Relevant error, event kinds, exit code, and cleanup result. Do not attach full databases or transcripts.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the documented host support and troubleshooting guide.
+          required: true
+        - label: I removed credentials and private project or account data.
+          required: true

@@ -19,7 +19,7 @@ from .drivers import DriverRequest, get_driver
 from .process import run_process
 from .schemas import DISCOVERY_SCHEMA, IMPLEMENT_SCHEMA, REVIEW_SCHEMA, validate_payload
 from .store import Store, runner_lock
-from .workspace import assert_identity, check_scope, controlled_git, create_branch, fingerprint, git, make_worktree, prepare_commit, staged_diff
+from .workspace import GitCleanupError, assert_identity, check_scope, controlled_git, create_branch, fingerprint, git, make_worktree, prepare_commit, remove_observation, staged_diff
 
 
 def initialize(spec: dict, state_dir: Path) -> dict:
@@ -39,6 +39,11 @@ def initialize(spec: dict, state_dir: Path) -> dict:
 
 def status(state_dir: Path) -> dict:
     return Store(state_dir).snapshot()
+
+
+def events(state_dir: Path, *, after_id=0, limit=20) -> dict:
+    rows = Store(state_dir).events(after_id=after_id, limit=limit)
+    return {"events": rows, "next_cursor": rows[-1]["id"] if rows else after_id}
 
 
 def request_stop(state_dir: Path) -> dict:
@@ -96,7 +101,7 @@ class Supervisor:
             result = self.driver.run(request, self.stopped)
             self.store.finish_call(call_id, {"returncode": result.returncode, "usage": result.usage,
                                            "cost_usd": result.cost_usd, "session_id": result.session_id,
-                                           "error": result.error, "cancelled": result.cancelled,
+                                           "error": result.error, "error_kind": getattr(result, "error_kind", None), "cancelled": result.cancelled,
                                            "timed_out": result.timed_out, "cleanup_confirmed": result.cleanup_confirmed,
                                            "output_dir": str(output_dir)})
             if not result.cleanup_confirmed:
@@ -105,14 +110,25 @@ class Supervisor:
             if result.cancelled or self.stopped():
                 raise _NoDispatch()
             if result.error or result.returncode or result.timed_out:
+                # An auth/config/protocol failure is not implementation feedback.
+                # Only explicitly transient failures or known-clean deadlines can
+                # consume the mission's bounded retry allowance.
+                kind = getattr(result, "error_kind", None)
+                if kind != "transient" and not result.timed_out:
+                    self.store.set_status("blocked", f"driver_{kind or 'error'}")
                 raise RuntimeError(result.error or "Worker invocation failed")
-            validate_payload(result.payload, schema)
+            try:
+                validate_payload(result.payload, schema)
+            except (ValueError, TypeError):
+                self.store.set_status("blocked", "driver_protocol")
+                raise
             return result.payload
         except _NoDispatch:
             raise
         except Exception as exc:
             if result is None:
-                self.store.finish_call(call_id, {"error": str(exc), "cost_usd": None, "usage": {}})
+                self.store.finish_call(call_id, {"error": str(exc), "cost_usd": None, "usage": {}, "cleanup_confirmed": False}, unknown=True)
+                self.store.set_status("blocked", "worker_cleanup_unconfirmed")
             self.store.event("invocation_error", {"call_id": call_id, "error": str(exc)})
             raise
 
@@ -168,7 +184,11 @@ class Supervisor:
         seen = {task["key"] for task in snapshot["tasks"]}
         prepared = []
         discovery_statuses = []
-        for index in range(self.spec["team"]["discovery_workers"]):
+        # Keep room for implementation plus its mandatory independent review.
+        # With fewer calls left a single observation may still return useful
+        # wait/block evidence, but a new implementation cannot start.
+        workers = min(self.spec["team"]["discovery_workers"], max(1, self.store.available_calls() - 2))
+        for index in range(workers):
             if self.stopped():
                 break
             path = self.store.directory / "observations" / uuid.uuid4().hex
@@ -197,6 +217,7 @@ class Supervisor:
             self.store.event("discovery", {"status": payload["status"], "summary": payload["summary"], "candidates": payload["candidates"]})
             discovery_statuses.append(payload["status"])
             if payload["status"] != "work":
+                self.release_observation(cwd)
                 return []
             candidates = []
             for candidate in payload["candidates"]:
@@ -206,6 +227,7 @@ class Supervisor:
                     candidates.append(self.candidate(candidate, cwd))
                 except ValueError as exc:
                     self.store.event("candidate_rejected", {"key": candidate["key"], "reason": str(exc)})
+            self.release_observation(cwd)
             return candidates
 
         proposals = []
@@ -223,7 +245,19 @@ class Supervisor:
             self.store.set_status("blocked", "discovery_requires_operator_decision")
         return sorted(by_key.values(), key=lambda item: (-item["priority"], item["key"]))
 
+    def release_observation(self, cwd):
+        try:
+            remove_observation(Path(self.spec["project"]), cwd, self.store.directory / "observations")
+        except (RuntimeError, ValueError, OSError) as exc:
+            # Interrupted or dirty worktrees are evidence, never force-delete.
+            self.store.event("observation_retained", {"worktree": str(cwd), "reason": str(exc)})
+            if isinstance(exc, GitCleanupError):
+                self.store.set_status("blocked", "git_cleanup_unconfirmed")
+
     def execute(self, candidate):
+        if not self.store.require_calls(2):
+            self.store.event("task_not_started", {"key": candidate["key"], "reason": self.store.control()["reason"]})
+            return
         snapshot = self.store.snapshot()
         workspace = make_worktree(Path(self.spec["project"]), self.store.directory / "worktrees" / uuid.uuid4().hex, snapshot["accepted_head"])
         git_file = (workspace / ".git").read_bytes()
@@ -238,6 +272,9 @@ class Supervisor:
                 raise
 
         for attempt in range(1, self.spec["max_task_attempts"] + 1):
+            if not self.store.require_calls(2):
+                feedback.append("Insufficient remaining budget for implementation and independent review")
+                break
             try:
                 implementation = self.invoke("implement", workspace, self.prompt(
                     "Implement this selected task and run relevant project checks. Preserve acceptance criteria. "
@@ -297,6 +334,8 @@ class Supervisor:
             except Exception as exc:
                 feedback.append(str(exc))
                 self.store.update_task(task_id, "running", feedback=feedback)
+                if isinstance(exc, GitCleanupError):
+                    self.store.set_status("blocked", "git_cleanup_unconfirmed")
                 if self.store.snapshot()["status"] == "blocked":
                     break
         self.store.update_task(task_id, "rejected", feedback=feedback)
@@ -327,13 +366,15 @@ class Supervisor:
                 break
             except Exception as exc:
                 self.store.event("cycle_error", {"error": str(exc)})
+                if isinstance(exc, GitCleanupError):
+                    self.store.set_status("blocked", "git_cleanup_unconfirmed")
                 self.store.failure("repeated_cycle_failures")
         snapshot = self.store.snapshot()
         if snapshot["stop_requested"] or self.interrupted.is_set():
             self.store.stop()
             self.store.set_status("stopped", "operator_stop", runner_pid=None)
         elif snapshot["status"] != "blocked":
-            reason = "wall_time_limit" if self.remaining() <= 0 else "invocation_limit"
+            reason = "wall_time_limit" if self.remaining() <= 0 else snapshot["reason"] if snapshot["status"] == "limited" else "invocation_limit"
             self.store.set_status("limited", reason, runner_pid=None)
         else:
             self.store.set_status("blocked", snapshot["reason"], runner_pid=None)
@@ -344,6 +385,8 @@ def run(state_dir: Path, *, driver=None) -> dict:
     interrupted = threading.Event()
     with runner_lock(store.directory):
         snapshot = store.snapshot()
+        if snapshot["status"] in {"limited", "stopped", "blocked"} or snapshot["stop_requested"]:
+            return snapshot
         if store.has_unfinished_work():
             store.set_status("blocked", "unclean_interruption")
             raise RuntimeError("Unfinished work requires explicit recover --acknowledge; it will not be replayed")

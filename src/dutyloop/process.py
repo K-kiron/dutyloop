@@ -171,7 +171,7 @@ def _cleanup(process, job):
 
 def run_process(argv, *, cwd: Path, input_text: str = "", output_dir: Path,
                 timeout_seconds: float, should_stop: Callable[[], bool] = lambda: False,
-                max_output_bytes: int = 1024 * 1024) -> ProcessResult:
+                max_output_bytes: int = 1024 * 1024, env: dict[str, str] | None = None) -> ProcessResult:
     """Run argv with bounded stdout/stderr (each cap includes its on-disk log).
 
     Output beyond each cap is drained and discarded, not retained in memory or
@@ -184,6 +184,10 @@ def run_process(argv, *, cwd: Path, input_text: str = "", output_dir: Path,
         return result
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or max_output_bytes < 1:
         result.error = "timeout and output cap must be positive"
+        return result
+    if env is not None and (not isinstance(env, dict) or any(not isinstance(key, str) or not key or "=" in key or "\x00" in key
+                              or not isinstance(value, str) or "\x00" in value for key, value in env.items())):
+        result.error = "env must contain valid string environment overrides"
         return result
     output_dir = Path(output_dir)
     streams = {"stdout": bytearray(), "stderr": bytearray()}
@@ -200,6 +204,8 @@ def run_process(argv, *, cwd: Path, input_text: str = "", output_dir: Path,
         options = {"cwd": str(cwd), "stdin": subprocess.PIPE,
                    "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
                    "shell": False}
+        if env is not None:
+            options["env"] = {**os.environ, **env}
         if os.name == "nt":
             job = _WindowsJob()
             options["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x4  # CREATE_SUSPENDED
@@ -255,13 +261,20 @@ def run_process(argv, *, cwd: Path, input_text: str = "", output_dir: Path,
     finally:
         if process is not None:
             # Also clean descendants left alive after a successful root exit.
-            result.cleanup_confirmed = _cleanup(process, job)
+            try:
+                result.cleanup_confirmed = _cleanup(process, job)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                result.cleanup_confirmed = False
+                result.error = result.error or f"Process-tree cleanup failed: {exc}"
             try:
                 result.returncode = process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
+            except (OSError, subprocess.TimeoutExpired):
                 result.cleanup_confirmed = False
-                result.returncode = process.wait(timeout=3)
+                try:
+                    process.kill()
+                    result.returncode = process.wait(timeout=3)
+                except (OSError, subprocess.TimeoutExpired):
+                    result.error = result.error or "Child process could not be reaped"
             for thread in readers:
                 thread.join(timeout=3)
             if writer:
@@ -274,7 +287,10 @@ def run_process(argv, *, cwd: Path, input_text: str = "", output_dir: Path,
                     if pipe:
                         pipe.close()
         if job:
-            job.close()
+            try:
+                job.close()
+            except OSError:
+                result.cleanup_confirmed = False
         result.stdout = streams["stdout"].decode("utf-8", errors="replace")
         result.stderr = streams["stderr"].decode("utf-8", errors="replace")
         if io_errors:

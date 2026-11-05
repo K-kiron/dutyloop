@@ -17,12 +17,6 @@ def _engine():
     return engine
 
 
-def _probe_driver(name: str) -> dict:
-    from .drivers import probe_driver
-
-    return probe_driver(name)
-
-
 def error_payload(error: Exception) -> dict:
     return {"ok": False, "error": {"type": type(error).__name__, "message": str(error)}}
 
@@ -82,8 +76,25 @@ def _serve_mcp(root: Path, projects: list[Path]) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
+    from . import __version__
+    from .drivers import NATIVE_DRIVERS
+
     parser = argparse.ArgumentParser(prog="dutyloop", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"DutyLoop {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+    configure = commands.add_parser("configure", help="Write a validated mission configuration without starting work")
+    configure.add_argument("--project", type=Path, required=True)
+    configure.add_argument("--output", type=Path, required=True)
+    configure.add_argument("--mission", required=True)
+    configure.add_argument("--allow-path", action="append", required=True)
+    configure.add_argument("--verify-json", action="append", required=True, help="Verification argv encoded as one JSON array; repeat for more checks")
+    configure.add_argument("--driver", choices=NATIVE_DRIVERS, default="codex")
+    configure.add_argument("--model")
+    configure.add_argument("--max-invocations", type=int, default=12)
+    configure.add_argument("--max-wall-seconds", type=float, default=1800)
+    validate = commands.add_parser("validate", help="Validate configuration read-only; do not create state or branches")
+    validate.add_argument("--spec", type=Path, required=True)
+    validate.add_argument("--state", type=Path, required=True)
     initialize = commands.add_parser("init", help="Initialize a mission without starting it")
     initialize.add_argument("--spec", type=Path, required=True)
     initialize.add_argument("--state", type=Path, required=True)
@@ -98,8 +109,16 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--state", type=Path, required=True)
         if name == "recover":
             command.add_argument("--acknowledge", action="store_true")
-    doctor = commands.add_parser("doctor", help="Probe native CLI executable availability without logging in")
-    doctor.add_argument("--driver", choices=("codex", "claude"))
+        if name == "status":
+            command.add_argument("--human", action="store_true", help="Show a compact operator summary instead of JSON")
+    events = commands.add_parser("events", help="Read ordered mission events after a durable cursor")
+    events.add_argument("--state", type=Path, required=True)
+    events.add_argument("--after", type=int, default=0)
+    events.add_argument("--limit", type=int, default=20)
+    doctor = commands.add_parser("doctor", help="Check native CLI versions and Git prerequisites without invoking models")
+    doctor.add_argument("--driver", choices=NATIVE_DRIVERS)
+    doctor.add_argument("--project", type=Path)
+    doctor.add_argument("--timeout-seconds", type=float, default=5)
     demo = commands.add_parser("demo", help="Run the deterministic local demonstration")
     demo.add_argument("--directory", type=Path, required=True)
     mcp = commands.add_parser("mcp", help="Serve the optional MCP control interface over stdio")
@@ -108,26 +127,38 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dispatch(arguments: argparse.Namespace) -> dict | None:
+def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
     command = arguments.command
+    if command in {"configure", "validate", "init"}:
+        from .onboarding import read_spec, validation_report, write_configuration
+    if command == "configure":
+        return write_configuration(project=arguments.project, output=arguments.output, mission=arguments.mission,
+                                   allowed_paths=arguments.allow_path, verification=arguments.verify_json,
+                                   driver=arguments.driver, model=arguments.model,
+                                   max_invocations=arguments.max_invocations, max_wall_seconds=arguments.max_wall_seconds)
+    if command == "validate":
+        return validation_report(read_spec(arguments.spec), arguments.state)
     if command == "init":
-        spec = json.loads(arguments.spec.read_text(encoding="utf-8-sig"))
-        if not isinstance(spec, dict):
-            raise ValueError("The mission spec must be a JSON object.")
-        return _engine().initialize(spec, arguments.state)
+        return _engine().initialize(read_spec(arguments.spec), arguments.state)
     if command == "run":
         return _engine().run(arguments.state)
     if command == "start":
         return start_background(arguments.state)
     if command == "status":
-        return _engine().status(arguments.state)
+        snapshot = _engine().status(arguments.state)
+        if arguments.human:
+            from .onboarding import human_status
+            return human_status(snapshot)
+        return snapshot
+    if command == "events":
+        return _engine().events(arguments.state, after_id=arguments.after, limit=arguments.limit)
     if command == "stop":
         return _engine().request_stop(arguments.state)
     if command == "recover":
         return _engine().recover(arguments.state, acknowledge=arguments.acknowledge)
     if command == "doctor":
-        names = [arguments.driver] if arguments.driver else ["codex", "claude"]
-        return {"drivers": [_probe_driver(name) for name in names]}
+        from .diagnostics import doctor
+        return doctor(driver=arguments.driver, project=arguments.project, timeout_seconds=arguments.timeout_seconds)
     if command == "demo":
         from .demo import run_demo
 
@@ -143,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = _dispatch(arguments)
         if result is not None:
-            print(json.dumps(result, ensure_ascii=False, allow_nan=False))
+            print(result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, allow_nan=False))
         return 0
     except KeyboardInterrupt:
         print(json.dumps(error_payload(InterruptedError("Interrupted."))), file=sys.stderr)

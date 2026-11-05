@@ -108,12 +108,14 @@ def test_start_never_clears_stop_or_limits(tmp_path, monkeypatch, snapshot):
         cli.start_background(tmp_path)
 
 
-def test_doctor_only_probes_drivers(monkeypatch, capsys):
+def test_doctor_dispatches_bounded_diagnostics_without_running_a_mission(monkeypatch, capsys):
+    from dutyloop import diagnostics
+
     probes = []
-    monkeypatch.setattr(cli, "_probe_driver", lambda name: probes.append(name) or {"name": name, "available": False})
-    assert cli.main(["doctor"]) == 0
-    assert probes == ["codex", "claude"]
-    assert len(json.loads(capsys.readouterr().out)["drivers"]) == 2
+    monkeypatch.setattr(diagnostics, "doctor", lambda **options: probes.append(options) or {"model_calls": 0})
+    assert cli.main(["doctor", "--driver", "codex", "--timeout-seconds", "2"]) == 0
+    assert probes == [{"driver": "codex", "project": None, "timeout_seconds": 2}]
+    assert json.loads(capsys.readouterr().out)["model_calls"] == 0
 
 
 def test_mcp_command_passes_explicit_allowlist(tmp_path, monkeypatch, capsys):
@@ -199,3 +201,61 @@ def test_real_background_runner_finishes_under_local_fake_driver(tmp_path, monke
     assert len(snapshot["calls"]) == 1
     assert snapshot["calls"][0]["state"] == "finished"
     assert (project / "health.txt").read_text(encoding="utf-8") == "healthy\n"
+
+
+def test_configure_validate_init_events_operator_journey(tmp_path, capsys):
+    project = _real_project(tmp_path)
+    # Uncommitted feedback is reported rather than silently supplied to the agent.
+    (project / "health.txt").write_text("uncommitted\n", encoding="utf-8")
+    spec_file, state = tmp_path / "mission.json", tmp_path / "state"
+    args = ["configure", "--project", str(project), "--output", str(spec_file),
+            "--mission", "Own project reliability", "--allow-path", "health.txt",
+            "--verify-json", json.dumps([sys.executable, "-c", "raise SystemExit(0)"])]
+    assert cli.main(args) == 0
+    created = json.loads(capsys.readouterr().out)
+    assert created["started"] is False and created["warnings"]
+    assert not state.exists()
+    assert cli.main(["validate", "--spec", str(spec_file), "--state", str(state)]) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+    assert not state.exists()
+    refs = subprocess.check_output(["git", "-C", str(project), "branch", "--format=%(refname)"])
+    assert len(refs.splitlines()) == 1
+    assert cli.main(["init", "--spec", str(spec_file), "--state", str(state)]) == 0
+    snapshot = json.loads(capsys.readouterr().out)
+    assert snapshot["status"] == "ready"
+    assert cli.main(["events", "--state", str(state), "--limit", "1"]) == 0
+    audit = json.loads(capsys.readouterr().out)
+    assert audit["events"][0]["kind"] == "initialized"
+    assert audit["next_cursor"] == audit["events"][0]["id"]
+    assert cli.main(["status", "--state", str(state), "--human"]) == 0
+    assert "Calls: 0/12" in capsys.readouterr().out
+
+
+def test_configure_never_overwrites_existing_user_file(tmp_path, capsys):
+    project = _real_project(tmp_path)
+    output = tmp_path / "mission.json"
+    output.write_text("keep this", encoding="utf-8")
+    assert cli.main(["configure", "--project", str(project), "--output", str(output),
+                     "--mission", "Maintain reliability", "--allow-path", ".",
+                     "--verify-json", '["python","-m","unittest"]']) == 1
+    assert output.read_text(encoding="utf-8") == "keep this"
+    assert json.loads(capsys.readouterr().err)["error"]["type"] == "FileExistsError"
+    assert not list(tmp_path.glob(".mission-*.tmp"))
+
+
+def test_bad_verification_array_does_not_write_configuration(tmp_path, capsys):
+    project = _real_project(tmp_path)
+    output = tmp_path / "mission.json"
+    assert cli.main(["configure", "--project", str(project), "--output", str(output),
+                     "--mission", "Maintain reliability", "--allow-path", ".",
+                     "--verify-json", '"python -m unittest"']) == 1
+    assert not output.exists()
+    assert "argv arrays" in capsys.readouterr().err
+
+
+def test_configuration_rejects_non_json_numbers_before_initialization(tmp_path, capsys):
+    spec = tmp_path / "invalid.json"
+    spec.write_text('{"mission":"Inspect","limit":NaN}', encoding="utf-8")
+    assert cli.main(["validate", "--spec", str(spec), "--state", str(tmp_path / "state")]) == 1
+    assert "non-JSON" in capsys.readouterr().err
+    assert not (tmp_path / "state").exists()
