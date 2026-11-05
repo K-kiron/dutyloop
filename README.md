@@ -1,22 +1,41 @@
 # DutyLoop
 
-An experimental, local supervisor for an ongoing project responsibility.
+**Give a coding agent an ongoing responsibility for your project.**
 
-Give it a mission, a repository, permitted paths, your verification commands,
-and invocation and wall-time limits. It asks a coding agent to inspect the
-current project, propose useful work, implement one selected task, and review
-the result. After an accepted change, it inspects the project again. Completing
-one task or an initial list does not complete the mission.
+[English](README.md) · [简体中文](README.zh-CN.md) · [Getting started](docs/getting-started.md) · [Configuration](docs/configuration.md)
 
-DutyLoop is a small implementation of an existing pattern. It does not claim
-to invent autonomous project work or outperform the alternatives below.
+[![CI](https://github.com/K-kiron/dutyloop/actions/workflows/ci.yml/badge.svg)](https://github.com/K-kiron/dutyloop/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## Try the deterministic demo first
+DutyLoop runs a local coding agent against a repository mission: inspect current
+evidence, decide what is worth doing, define a task, implement it, run your checks,
+review the result, and look for the next useful improvement. Finishing a task does
+not finish the mission. It continues until a limit, blocker, or your stop command.
 
-Requires Python 3.11+, Git, and an existing Git author identity. No model account
-or API key is needed for this demo.
+For example, delegate “maintain the reliability of this library's parsing and
+export paths” instead of repeatedly writing individual bug-fix prompts. You set
+the scope, constraints, checks, and limits once. DutyLoop records its decisions
+and delivers accepted changes on a separate local Git branch for you to inspect.
 
-Install from the source repository:
+## What you can delegate
+
+| Responsibility | Evidence it can use | Expected output |
+| --- | --- | --- |
+| Maintain a library or CLI | Current source, tests, documented behavior, committed issue reproductions | Focused fixes and regression tests |
+| Improve a bounded product area | Project feedback files, reproducible user journeys, explicit product constraints | Changes with stated acceptance criteria |
+| Keep documentation usable | Current code, examples, and documentation | Verified corrections and working examples |
+
+The mission must supply enough product direction to judge useful work. When the
+evidence is weak, waiting is a valid outcome. When a business decision is missing,
+the agent should report a blocker. DutyLoop has no built-in customer-feedback
+collector, competitor crawler, or market-analysis service; provide the evidence
+and tools your chosen agent can actually access.
+
+## Try the local demo
+
+Requires **Python 3.11+** and **Git**. The demo also needs a configured Git author
+identity. Installation currently uses the source repository:
 
 ```console
 git clone https://github.com/K-kiron/dutyloop.git
@@ -25,151 +44,111 @@ python -m pip install -e .
 dutyloop demo --directory ../dutyloop-demo
 ```
 
-Use a new or empty demo directory. The demo creates a tiny repository with two
-independent defects. Its **scripted fake driver** discovers defects by inspecting
-the current files, adds fixes and regression tests, and uses the **real engine,
-Git worktrees, and independent unittest commands**. After two accepted tasks,
-another discovery returns `wait`; the seven-invocation limit stops the mission.
-The original checkout is checked for changes, and the accepted branch is tested
-again in a separate worktree.
+Use a new or empty demo directory. A **scripted driver** discovers two fixture
+defects while the real supervisor creates worktrees, runs tests, accepts changes,
+continues discovery, and stops after seven invocations. No model account or API
+key is used. This demonstrates the workflow; it does not benchmark model judgment.
 
-The result includes `simulated: true`, the engine snapshot, and the verification
-outcome. This demonstrates control flow and integration. It does **not** measure
-LLM judgment, usefulness, or reliability on another project.
+## Give it a real project
 
-## Run with an existing coding CLI
+Install and authenticate a supported coding CLI through that CLI's own setup.
+Choose a project with a committed `HEAD` and checks that run from a fresh checkout.
+Uncommitted changes in your working copy are not copied into the mission.
 
-Install and sign in to your chosen CLI using that CLI's own supported setup.
-DutyLoop invokes the existing executable and its existing login. It does not
-install coding agents, create credentials, or change global agent settings.
-
-1. Copy [the example mission](examples/mission.json) to your working location.
-2. Set `project` to your repository's absolute path. Choose allowed paths,
-   constraints, and verification commands for that project.
-3. Choose `codex` or `claude` under `driver.name`.
-4. Keep mission state **outside the target repository**, then initialize and run:
+1. Copy [examples/mission.json](examples/mission.json) outside the target repository.
+2. Set the absolute project path, a specific ongoing mission, allowed paths, and
+   verification commands suitable for that project.
+3. Check the setup, then initialize and run:
 
 ```console
-dutyloop doctor --driver codex
-dutyloop init --spec examples/mission.json --state ../my-mission-state
-dutyloop run --state ../my-mission-state
+dutyloop doctor --driver codex --project /absolute/path/to/project
+dutyloop validate --spec mission.json --state ../mission-state
+dutyloop init --spec mission.json --state ../mission-state
+dutyloop run --state ../mission-state
 ```
 
-`doctor` checks executable availability only. It does not verify authentication,
-model access, quota, or a successful live invocation.
-
-For a detached local run:
+For a detached run and a quick progress check:
 
 ```console
-dutyloop start --state ../my-mission-state
-dutyloop status --state ../my-mission-state
-dutyloop stop --state ../my-mission-state
+dutyloop start --state ../mission-state
+dutyloop status --state ../mission-state --human
+dutyloop events --state ../mission-state --limit 20
+dutyloop stop --state ../mission-state
 ```
 
-`start` launches a background Python process and stores its stdout/stderr in the
-state directory. Keep that directory private: prompts, project details, child
-logs, and generated artifacts may contain sensitive information.
+`stop` requests cancellation; read status again to confirm the runner has exited.
+State must stay outside the target repository. The [getting-started guide](docs/getting-started.md)
+includes mission generation, inspecting the resulting branch, and troubleshooting.
 
-## What the supervisor does
+## What is built in
 
-- Reserves each discovery, implementation, or review invocation before dispatch.
-- Rechecks current project evidence and records candidate reasons and acceptance
-  criteria. Discovery can use one to three workers; implementation stays serial.
-- Runs changes in managed detached Git worktrees. Accepted commits advance the
-  mission branch. The supervisor does not switch or modify the original checkout;
-  child tools retain the host and shared-Git access described below.
-- Runs operator-supplied verification commands outside the model's judgment,
-  then requests a separate review invocation.
-- Checks changed paths before accepting work. Rejected attempts remain available
-  for inspection rather than being silently presented as completed work.
-- Continues after acceptance or waits and inspects again until stopped, limited,
-  blocked, or failed.
+- **Continuous discovery:** one to three discovery workers propose evidenced
+  candidates with acceptance criteria; implementation stays serial.
+- **A complete delivery loop:** separate implementation and review invocations,
+  plus operator-supplied verification commands run by the supervisor.
+- **Inspectable Git output:** managed task worktrees, accepted commits on a
+  mission branch, and retained evidence for rejected or interrupted attempts.
+- **Persistent control:** local SQLite state, event history, exclusive runner
+  ownership, explicit interruption recovery, and background execution.
+- **Enforced invocation and elapsed-time limits:** calls are reserved before
+  dispatch; explicit stop requests are persisted and managed children cancelled.
+- **CLI and optional MCP control:** use the same engine from a terminal or a
+  configured MCP client.
 
-There is no automatic push, pull-request creation, merge into your current
-branch, or deployment. Inspect the mission branch and evidence before integrating
-its changes yourself.
+The runtime does not automatically push, open PRs, merge into your working branch,
+or deploy. Review and integrate the resulting commits through your own workflow.
 
-## Limits and permissions
+## Integrations and maturity
 
-**No USD hard cap is supported.** Monetary limit fields are rejected instead of
-being accepted as an unenforceable promise. Native CLI usage or cost may be
-unknown. Reported cost is telemetry, not a billing guarantee.
+| Integration | Current support | Verification boundary |
+| --- | --- | --- |
+| Codex CLI | Native structured-output adapter | Offline protocol tests and one authenticated fixture mission |
+| Claude Code CLI | Native structured-output adapter | Offline protocol tests; no authenticated fixture mission recorded |
+| OpenCode CLI **2.2.5** | Version-pinned native JSON-event adapter | Source-grounded launch policy and offline protocol tests; no authenticated fixture mission |
+| DeepSeek Harness **0.2.2-rc.1** | Version-pinned native headless adapter | Source-grounded launch policy and offline protocol tests; no authenticated fixture mission |
+| Custom command | Documented JSON wrapper protocol | You supply and verify the host-specific wrapper |
+| MCP client | Optional local stdio control server | Official SDK protocol test; client configuration is manual |
 
-`max_invocations` limits driver calls, including discovery and review; it does
-not limit the model requests or subagents a coding CLI may make internally.
-`max_wall_seconds` is elapsed time from the mission's first run, including waiting
-and subsequent downtime. The supervisor controls dispatch, deadlines, stop requests, and
-child process cleanup. It cannot undo effects already performed by a child or
-promise that a provider will stop billing at an exact instant.
+Other hosts do not acquire native support merely by offering MCP. See the
+[support matrix](docs/limits-and-hosts.md), [adapter protocol](docs/adapter-protocol.md),
+and [verification record](docs/validation.md) for exact coverage.
 
-**Allowed paths are an acceptance rule, not an OS security boundary.** Worktrees
-isolate Git work. They do not isolate the filesystem, network, credentials, Git
-metadata, or tools available to the child. In particular, Claude implementation
-uses shell tools under the operator's account. Use a separately restricted user,
-container, or VM when that boundary is required.
+OpenCode and DeepSeek Harness reject unrecognized versions before model work.
+DeepSeek Harness uses its existing headless profile; omit `driver.model` for it.
+OpenHands and other runtimes currently require an operator-owned custom wrapper.
 
-Verification argv is trusted operator configuration and executes code. Review
-project tests and commands before running them. Constraints and research-domain
-instructions guide the agent; they do not create filesystem or network policy.
-If an implementation can edit a test script, that script is not an independent
-correctness oracle. Keep decisive acceptance checks outside writable paths when
-possible, and assess actual user behavior before adopting the result.
+DutyLoop is an early-stage project. Its supervisor behavior has automated tests;
+long-term usefulness and reduced maintainer effort still need real-project
+evaluation. [Existing alternatives](docs/alternatives.md) include AUTOPILOT,
+OpenClaw, Paperclip, and Symphony. DutyLoop focuses on a small local mission
+contract with inspectable state; it has no comparative effectiveness result.
 
-See [limits and host support](docs/limits-and-hosts.md) for the exact boundaries
-and [architecture](docs/architecture.md) for acceptance and recovery behavior.
+## Read these boundaries before an unattended run
 
-## Host support
+**Limits:** `max_invocations` counts driver calls, not the requests or subagents
+inside a coding CLI. `max_wall_seconds` includes waiting and later downtime.
+**USD hard caps are unsupported**; missing cost stays unknown.
 
-| Integration | Scope |
-| --- | --- |
-| Codex CLI | Native structured-output adapter; uses an already installed and authenticated CLI. |
-| Claude Code CLI | Native structured-output adapter; uses an already installed and authenticated CLI. |
-| Custom command | JSON stdin/stdout protocol for an operator-provided wrapper. |
-| MCP client | Optional local control interface; the same mission engine runs underneath. |
+**Authority:** allowed paths are checked before acceptance. Worktrees do not
+sandbox the filesystem, network, credentials, or shared Git metadata. Children
+run with the authority of their host environment. Use a separately restricted
+account, container, or VM when that boundary is required.
 
-Two native adapters plus a custom wrapper protocol do **not** mean native support
-for every other coding host. The deterministic demo does not exercise live
-authenticated Codex or Claude sessions. See [the adapter protocol](docs/adapter-protocol.md).
-The [verification record](docs/validation.md) distinguishes offline tests, the
-scripted demo, and the separately completed native Codex fixture check.
+**Verification:** your verification argv executes project code. A test the agent
+can rewrite is not an independent acceptance oracle, and a separate model review
+does not establish user value. Keep decisive checks outside writable paths where
+practical. State and logs can contain private project data; keep them private.
 
-## Optional MCP control
+See [operational limits](docs/limits-and-hosts.md) for the complete contract.
 
-```console
-python -m pip install -e ".[mcp]"
-dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/repository
-```
+## Documentation and contributing
 
-Configure your MCP client to launch this command with paths appropriate to your
-machine. The tools are `mission_create`, `mission_start`, `mission_status`, and
-`mission_stop`. Creation does not start work. Projects must match an explicitly
-registered root, and mission creation through MCP accepts native drivers only.
-The supplied verification commands authorize local command execution when a
-mission runs. Treat MCP access to create/start as that execution authority.
+- [Getting started](docs/getting-started.md): first mission and branch review.
+- [Configuration reference](docs/configuration.md): all fields, defaults, and examples.
+- [Operations](docs/operations.md): status, events, limits, interruption, and recovery.
+- [MCP setup](docs/mcp.md): manual client configuration and tool authority.
+- [Architecture](docs/architecture.md): discovery, acceptance, persistence, and failure handling.
+- [Contributing](CONTRIBUTING.md): development checks and integration expectations.
 
-## Existing alternatives
-
-| Project | Existing capabilities and useful differences |
-| --- | --- |
-| [AUTOPILOT](https://github.com/M-A-S-T-E-R-M-I-N-D/AUTOPILOT) | A direct alternative with repository discovery, gates, budgets, fleets, and a dashboard. Its **auto-mode** can automatically admit agent proposals; it is not limited to a human-approved initial task list. |
-| [OpenClaw](https://github.com/openclaw/openclaw) | Standing orders, automations, persistent goals, automatic continuation, and token-budget controls within a broader assistant gateway. |
-| [Paperclip](https://github.com/paperclipai/paperclip) | Goals, organizational responsibilities, agent orchestration, heartbeat execution, budgets, and governance. |
-| [Symphony](https://github.com/openai/symphony) | A long-running service that dispatches issue-tracker work into isolated coding workspaces. Discovery policy can be supplied above its runner. |
-
-DutyLoop's experiment is a smaller, inspectable mission contract and supervisor,
-with explicit evidence and limits. It has no comparative effectiveness results.
-The [source-backed comparison](docs/alternatives.md) records the inspected
-revisions and material budget limitations.
-
-## Development
-
-```console
-python -m pip install -e ".[dev]"
-python -m pytest
-```
-
-Tests use local fixtures and simulated drivers unless a test explicitly states
-otherwise. They do not silently invoke paid models. The project is experimental;
-state compatibility and unattended behavior need evaluation before operational use.
-
-MIT licensed.
+MIT licensed. Bug reports and concrete compatibility reports are welcome in
+[GitHub Issues](https://github.com/K-kiron/dutyloop/issues).

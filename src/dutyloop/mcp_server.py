@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .cli import _reject_link, error_payload, start_background
+from .drivers import NATIVE_DRIVERS
 
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*", re.ASCII)
 _RESERVED_NAMES = {"con", "prn", "aux", "nul"} | {
@@ -67,7 +68,7 @@ class ControlPlane:
             isinstance(driver, dict)
             and not (set(driver) - {"name", "model"})
             and isinstance(driver.get("name", "codex"), str)
-            and driver.get("name", "codex") in {"codex", "claude"}
+            and driver.get("name", "codex") in NATIVE_DRIVERS
             and (driver.get("model") is None or isinstance(driver["model"], str))
         )
 
@@ -90,7 +91,7 @@ class ControlPlane:
                 raise ValueError("The selected project must exactly match a registered allowlist root.")
         driver = supplied.get("driver", {"name": "codex"})
         if not self._native_driver(driver):
-            raise ValueError("MCP driver configuration accepts only native codex/claude names and an optional model.")
+            raise ValueError("MCP driver configuration accepts only supported native drivers and an optional model.")
         supplied["project"] = str(project)
         return _engine().initialize(supplied, state)
 
@@ -99,7 +100,7 @@ class ControlPlane:
         state = self._state(name)
         snapshot = self._authorized_snapshot(state)
         if not self._native_driver(snapshot.get("driver")):
-            raise ValueError("MCP can start only stored missions using a native codex/claude driver.")
+            raise ValueError("MCP can start only stored missions using a supported native driver.")
         return start_background(state)
 
     def mission_status(self, name: str) -> dict:
@@ -111,6 +112,12 @@ class ControlPlane:
         state = self._state(name)
         self._authorized_snapshot(state)
         return _engine().request_stop(state)
+
+    def mission_events(self, name: str, after: int = 0, limit: int = 20) -> dict:
+        """Read audit events without starting, recovering or changing a mission."""
+        state = self._state(name)
+        self._authorized_snapshot(state)
+        return _engine().events(state, after_id=after, limit=limit)
 
 
 def _tool_result(action: Callable[[], dict]) -> dict:
@@ -149,5 +156,10 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
     def mission_stop(name: str) -> dict:
         """Request asynchronous cancellation; poll status to learn whether cleanup has completed."""
         return _tool_result(lambda: controller.mission_stop(name))
+
+    @server.tool()
+    def mission_events(name: str, after: int = 0, limit: int = 20) -> dict:
+        """Read ordered audit events after a cursor without starting or recovering work."""
+        return _tool_result(lambda: controller.mission_events(name, after, limit))
 
     return server

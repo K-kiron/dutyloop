@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import contextvars
 import re
+import shutil
 import subprocess
 import uuid
 from contextlib import contextmanager
@@ -14,6 +15,10 @@ from .config import plain_path, relative_path
 from .process import run_process
 
 _CONTROL = contextvars.ContextVar("git_control", default=None)
+
+
+class GitCleanupError(RuntimeError):
+    """A Git child may still be alive; no more work may be dispatched."""
 
 
 @contextmanager
@@ -30,12 +35,21 @@ def git(project: Path, *args: str) -> str:
     control = _CONTROL.get()
     if control is not None:
         should_stop, remaining, output_dir = control
-        result = run_process(argv, cwd=project, output_dir=output_dir / uuid.uuid4().hex,
+        operation_dir = plain_path(output_dir / uuid.uuid4().hex)
+        result = run_process(argv, cwd=project, output_dir=operation_dir,
                              timeout_seconds=max(.001, remaining()), should_stop=should_stop)
-        if result.error or result.cancelled or result.timed_out or not result.cleanup_confirmed or result.output_truncated:
+        if not result.cleanup_confirmed:
+            raise GitCleanupError("Git process-tree cleanup could not be confirmed; inspect retained logs")
+        if result.error or result.cancelled or result.timed_out or result.output_truncated:
             raise RuntimeError(result.error or "Git operation interrupted by stop or deadline")
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "Git command failed")
+        # Successful Git operations need no persistent empty capture files.
+        # Failed/interrupted operations retain their logs for diagnosis.
+        log_root = plain_path(output_dir)
+        if operation_dir.parent != log_root:
+            raise RuntimeError("Git log cleanup escaped its owned directory")
+        shutil.rmtree(operation_dir)
         return result.stdout.strip()
     result = subprocess.run(argv, capture_output=True, timeout=60)
     if result.returncode:
@@ -54,6 +68,15 @@ def make_worktree(project: Path, path: Path, head: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     git(project, "worktree", "add", "--detach", str(path), head)
     return path
+
+
+def remove_observation(project: Path, path: Path, observations: Path):
+    """Remove only an owned, unchanged discovery checkout via Git's registry."""
+    path, observations = plain_path(path), plain_path(observations)
+    if path.parent != observations:
+        raise ValueError("Observation cleanup escaped its owned directory")
+    # No --force: modified evidence is retained even if a caller misclassifies it.
+    git(project, "worktree", "remove", str(path))
 
 
 def assert_identity(path: Path, expected_head: str, git_file: bytes):
@@ -104,8 +127,11 @@ def prepare_commit(path: Path, title: str, kind: str):
     if re.search(r"generated (?:by|with)|written by ai|co-authored-by|https?://(?:chatgpt\.com|claude\.ai)/", title, re.I):
         raise ValueError("Commit title contains prohibited attribution or a private conversation link")
     tree = git(path, "write-tree")
+    base = git(path, "rev-parse", "HEAD")
     git(path, "commit", "-m", f"{kind}: {title}")
     head = git(path, "rev-parse", "HEAD")
+    if git(path, "rev-list", "--parents", "--max-count=1", head).split() != [head, base]:
+        raise RuntimeError("A commit hook changed the reviewed ancestry; integration refused")
     if git(path, "rev-parse", "HEAD^{tree}") != tree:
         raise RuntimeError("A commit hook changed the reviewed tree; integration refused")
     return head

@@ -22,6 +22,7 @@ def control(tmp_path, monkeypatch):
             "status": "waiting", "project": str(project.resolve()), "driver": {"name": "codex"}
         },
         request_stop=lambda state: calls.append(("stop", state)) or {"stop_requested": True},
+        events=lambda state, **options: calls.append(("events", state, options)) or {"events": [], "next_cursor": options["after_id"]},
     )
     monkeypatch.setattr(mcp_server, "_engine", lambda: engine)
     controller = mcp_server.ControlPlane(tmp_path / "states", [project])
@@ -129,6 +130,20 @@ def test_tool_errors_have_json_shape():
     }
 
 
+def test_events_checks_the_registered_project_before_reading(control):
+    controller, _project, calls = control
+    assert controller.mission_events("maintenance", after=4, limit=2) == {"events": [], "next_cursor": 4}
+    assert calls == [("status", controller.root / "maintenance"),
+                     ("events", controller.root / "maintenance", {"after_id": 4, "limit": 2})]
+
+
+@pytest.mark.parametrize("name", ["opencode", "dsh"])
+def test_mcp_uses_the_same_native_driver_registry(control, name):
+    controller, _project, calls = control
+    controller.mission_create("maintenance", {"driver": {"name": name}})
+    assert calls[0][1]["driver"]["name"] == name
+
+
 def test_real_mcp_control_creates_and_stops_without_starting_driver(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
@@ -163,7 +178,7 @@ def test_official_sdk_registers_tools_without_starting_mission(control):
     server = mcp_server.create_server(controller.root, [project])
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == {
-        "mission_create", "mission_start", "mission_status", "mission_stop"
+        "mission_create", "mission_start", "mission_status", "mission_stop", "mission_events"
     }
     create = next(tool for tool in tools if tool.name == "mission_create")
     assert "authorization" in create.description.lower()
@@ -192,7 +207,7 @@ def test_official_sdk_stdio_handshake_is_inert_and_returns_json_errors(tmp_path)
                 assert initialized.serverInfo.name == "DutyLoop"
                 tools = await session.list_tools()
                 assert {tool.name for tool in tools.tools} == {
-                    "mission_create", "mission_start", "mission_status", "mission_stop"
+                    "mission_create", "mission_start", "mission_status", "mission_stop", "mission_events"
                 }
                 result = await session.call_tool("mission_status", {"name": "../escape"})
                 return json.loads(result.content[0].text)

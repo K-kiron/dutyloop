@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "mission": "Own the ongoing usability and reliability of this project. Inspect current evidence, choose useful work, implement and verify one task, then discover the next task until stopped or limited.",
+  "mission": "Maintain the reliability and usability of the documented public API. Inspect current source, tests, documentation and committed feedback. Prioritize reproducible user-facing failures, define acceptance criteria, implement and verify one focused change, then inspect again. Wait when there is no well-supported work; report a blocker when a product decision is required.",
   "project": "/absolute/path/to/your/repository",
   "allowed_paths": ["src", "tests", "docs"],
   "constraints": [
@@ -8,7 +8,7 @@
     "Do not change credentials, dependencies, CI, security policy, or deployment configuration.",
     "Prefer work supported by reproducible defects or concrete user-facing evidence."
   ],
-  "kinds": ["feature", "bugfix", "qa", "docs"],
+  "kinds": ["bugfix", "qa", "docs"],
   "research_domains": [],
   "verification": [
     ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
@@ -19,5 +19,7 @@
   "poll_seconds": 60,
   "max_task_attempts": 2,
   "max_failures": 3,
+  "call_timeout_seconds": 300,
+  "max_changed_files": 20,
   "branch": "work/project-maintenance"
 }

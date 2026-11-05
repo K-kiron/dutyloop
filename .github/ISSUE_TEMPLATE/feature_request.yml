@@ -1,0 +1,28 @@
+name: Feature or integration request
+description: Describe a concrete workflow or a host capability DutyLoop should support.
+title: "feat: "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: The responsibility or workflow
+      description: Who needs this, what are they trying to delegate, and what manual work remains today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed behavior and acceptance criteria
+      description: What observable result would make this useful? Include scope, limits, and failure/stop behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: interfaces
+    attributes:
+      label: Host interface or evidence
+      description: For integrations, link official documentation or versioned source for noninteractive execution, final output, permission handling and cancellation. MCP compatibility alone does not establish these capabilities.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround or alternatives
+      description: What do you use now, and where does it fall short?

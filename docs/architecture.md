@@ -44,6 +44,13 @@ candidate key, kind, priority, reason, evidence, and acceptance criteria. The
 supervisor validates the structured response; valid JSON alone does not prove
 that its evidence or priority is correct.
 
+Candidates are de-duplicated by key, then selected by descending priority (5 is
+highest) and stable key order. The next prompt includes recent task history.
+Before starting an implementation attempt, the runner checks that calls remain
+for both implementation and mandatory review. Discovery worker count also leaves
+room for that pair when budget permits. This is a heuristic selection policy,
+not an independent estimate of customer value.
+
 An implementation's `completed` response is insufficient for acceptance.
 Verification is run by the supervisor using the configured argv, and review is
 a separate driver invocation. A review from the same model is not an
@@ -54,6 +61,13 @@ finish the mission. Rejected or uncertain attempts remain inspectable. The
 supervisor does not switch or edit the original checkout. Child tools retain
 host permissions and access to shared Git metadata; worktrees are not a security
 sandbox. No publication or deployment step is built into the loop.
+
+Clean, completed discovery worktrees are removed; dirty or uncertain ones are
+retained with an event. Implementation worktrees remain available for review.
+State records include structured host errors when available. Authentication,
+quota, configuration, protocol, and unclassified host failures block rather than
+being fed back as a code-fix task. Explicit transient failures and known-clean
+deadlines use the bounded failure policy.
 
 ## Waiting and termination
 
@@ -74,6 +88,11 @@ An unfinished call after an interruption has an unknown outcome. Automatic
 replay would risk duplicating work or effects, so recovery requires explicit
 operator acknowledgment. Inspect worktrees and call artifacts first. Neither
 recovery nor a success-looking final message refunds spent invocations.
+
+Recovery acknowledgment can settle an interruption or unknown cleanup. It does
+not reset a stop, exhausted budget, scope violation, host blocker, or exhausted
+failure policy. Resolving those conditions requires inspection and a new explicit
+mission where appropriate.
 
 Unfinished implementation or verification tasks also require recovery even if
 their last model call completed. Stop and integration are serialized; work not

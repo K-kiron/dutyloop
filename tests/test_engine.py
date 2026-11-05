@@ -1,7 +1,9 @@
 import subprocess
+import shlex
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -56,6 +58,7 @@ def test_successful_worker_cannot_override_failed_operator_gate(mission):
     assert worker.phases == ["discover", "implement", "discover"]
     assert result["tasks"][0]["state"] == "rejected"
     assert result["tasks"][0]["commit_sha"] is None
+    assert Path(result["tasks"][0]["worktree"]).is_dir()
     assert (project / "app.py").read_text() == "value = 0\n"
 
 
@@ -180,16 +183,128 @@ def test_verification_crash_requires_recovery_even_after_model_call_finished(mis
 def test_runtime_git_hook_obeys_wall_deadline(mission):
     project, state = mission
     hook = project / ".git" / "hooks" / "post-checkout"
-    hook.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+    marker = project / ".git" / "deadline-hook-entered"
+    hook.write_text(f"#!/bin/sh\nprintf entered > {shlex.quote(marker.as_posix())}\nsleep 8\n", encoding="utf-8", newline="\n")
     hook.chmod(0o755)
     store = Store(state)
     with store.connection() as db:
         data = store._read(db)
-        data["spec"]["limits"]["max_wall_seconds"] = .2
+        data["spec"]["limits"]["max_wall_seconds"] = 2
         store._save(db, data)
     started = time.monotonic()
     result = run(state, driver=Worker())
-    assert time.monotonic() - started < 4
+    assert time.monotonic() - started < 6
+    assert marker.is_file(), "The hook must actually start for the deadline check to be meaningful"
     assert result["status"] == "limited"
     assert result["reason"] == "wall_time_limit"
+    assert result["invocations"] == 0
+
+
+def test_task_does_not_start_without_budget_for_independent_review(mission):
+    _, state = mission
+    store = Store(state)
+    with store.connection() as db:
+        data = store._read(db)
+        data["spec"]["limits"]["max_invocations"] = 2
+        store._save(db, data)
+    worker = Worker()
+    result = run(state, driver=worker)
+    assert worker.phases == ["discover"]
+    assert result["tasks"] == []
+    assert result["invocations"] == 1
+    assert result["reason"] == "insufficient_task_budget"
+    assert not (state / "worktrees").exists()
+
+
+def test_parallel_discovery_leaves_room_for_implementation_and_review(mission):
+    _, state = mission
+    store = Store(state)
+    with store.connection() as db:
+        data = store._read(db)
+        data["spec"]["team"]["discovery_workers"] = 3
+        store._save(db, data)
+    worker = Worker()
+    result = run(state, driver=worker)
+    assert worker.phases == ["discover", "implement", "review"]
+    assert result["tasks"][0]["state"] == "accepted"
+    assert list((state / "observations").iterdir()) == []
+    assert list((state / "git-operations").iterdir()) == []
+
+
+def test_wait_cycles_release_unchanged_observations_and_git_logs(mission):
+    _, state = mission
+    run(state, driver=Worker(discovery="wait"))
+    assert list((state / "observations").iterdir()) == []
+    assert list((state / "git-operations").iterdir()) == []
+
+
+def test_modified_observation_and_rejected_task_are_retained(mission):
+    _, state = mission
+
+    class DirtyObservation(Worker):
+        def run(self, request, should_stop):
+            if request.phase == "discover":
+                (request.cwd / "app.py").write_text("value = 99\n", encoding="utf-8")
+            return super().run(request, should_stop)
+
+    result = run(state, driver=DirtyObservation())
+    assert result["status"] == "blocked"
+    assert len(list((state / "observations").iterdir())) == 1
+    assert next((state / "observations").iterdir()).joinpath("app.py").read_text() == "value = 99\n"
+
+
+def test_terminal_host_error_does_not_retry_or_consume_remaining_budget(mission):
+    _, state = mission
+
+    class AuthenticationFailure:
+        def run(self, request, should_stop):
+            result = DriverResult(returncode=1, error="Host requires login")
+            result.error_kind = "auth"
+            return result
+
+    result = run(state, driver=AuthenticationFailure())
+    assert result["status"] == "blocked"
+    assert result["reason"] == "driver_auth"
+    assert result["invocations"] == 1
+    assert result["calls"][0]["error_kind"] == "auth"
+
+
+def test_unexpected_driver_exception_is_unknown_charged_and_requires_cleanup(mission):
+    _, state = mission
+
+    class BrokenDriver:
+        def run(self, request, should_stop):
+            raise OSError("Worker transport disappeared")
+
+    result = run(state, driver=BrokenDriver())
+    assert result["status"] == "blocked"
+    assert result["reason"] == "worker_cleanup_unconfirmed"
+    assert result["invocations"] == 1
+    assert result["calls"][0]["state"] == "unknown"
+    assert result["calls"][0]["cleanup_confirmed"] is False
+
+
+def test_commit_hook_cannot_add_unreviewed_history_with_same_final_tree(mission):
+    project, state = mission
+    original = status(state)["accepted_head"]
+    hook = project / ".git" / "hooks" / "post-commit"
+    hook.write_text("#!/bin/sh\ngit -c core.hooksPath=/dev/null commit --allow-empty -m 'Unreviewed extra commit'\n", encoding="utf-8")
+    hook.chmod(0o755)
+    result = run(state, driver=Worker())
+    assert result["accepted_head"] == original
+    assert result["tasks"][0]["state"] == "rejected"
+    assert "ancestry" in result["tasks"][0]["feedback"][-1]
+
+
+def test_unconfirmed_git_cleanup_blocks_without_dispatching_worker(mission, monkeypatch):
+    import dutyloop.workspace as workspace
+    from dutyloop.process import ProcessResult
+
+    _, state = mission
+    monkeypatch.setattr(workspace, "run_process", lambda *args, **kwargs: ProcessResult(cleanup_confirmed=False))
+    worker = Worker()
+    result = run(state, driver=worker)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "git_cleanup_unconfirmed"
+    assert worker.phases == []
     assert result["invocations"] == 0

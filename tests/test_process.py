@@ -120,6 +120,22 @@ class ProcessTests(unittest.TestCase):
         self.assertIsNotNone(result.error)
         self.assertTrue(result.cleanup_confirmed)
 
+    def test_environment_overrides_are_child_local(self):
+        before = dict(os.environ)
+        result = self.run_child("import os; print(os.environ['DUTYLOOP_PROCESS_TEST']); print(bool(os.environ.get('PATH')))",
+                                env={"DUTYLOOP_PROCESS_TEST": "isolated"})
+        self.assertIsNone(result.error)
+        self.assertEqual(result.stdout.splitlines(), ["isolated", "True"])
+        self.assertEqual(dict(os.environ), before)
+
+    def test_cleanup_error_is_reported_without_bypassing_finalization(self):
+        with patch("dutyloop.process._cleanup", side_effect=OSError("cleanup denied")):
+            result = self.run_child("print('completed')")
+        self.assertFalse(result.cleanup_confirmed)
+        self.assertIn("cleanup failed", result.error)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "completed")
+
     @unittest.skipUnless(os.name == "nt", "Windows Job Object failure path")
     def test_failed_job_assignment_never_executes_suspended_child(self):
         marker = self.root / "must-not-run"
