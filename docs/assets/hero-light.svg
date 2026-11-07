@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+<title id="title">DutyLoop</title>
+<desc id="desc">An ongoing mission for your coding agent, illustrated by a continuing mission loop.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+<rect x="1" y="1" width="1198" height="338" rx="22" fill="#F3F7F5" stroke="#D5E3DE"/>
+<path d="M728 36V304" stroke="#D5E3DE"/>
+<text x="58" y="76" fill="#58746B" font-size="14" font-weight="650" letter-spacing="2.4">LOCAL / MISSION-DRIVEN / INSPECTABLE</text>
+<text x="52" y="196" fill="#163C35" font-size="106" font-weight="700" letter-spacing="-5">DutyLoop<tspan fill="#187A61">.</tspan></text>
+<text x="58" y="252" fill="#58746B" font-size="26">An ongoing mission for your coding agent.</text>
+<rect x="58" y="283" width="29" height="4" rx="2" fill="#187A61"/>
+<rect x="93" y="283" width="10" height="4" rx="2" fill="#D5E3DE"/>
+<rect x="109" y="283" width="10" height="4" rx="2" fill="#D5E3DE"/>
+<circle cx="954" cy="170" r="104" fill="none" stroke="#E0EEE7" stroke-width="27"/>
+<path d="M954 66 A104 104 0 0 1 1058 170" fill="none" stroke="#187A61" stroke-width="3"/>
+<path d="M1058 170 A104 104 0 0 1 954 274" fill="none" stroke="#D5E3DE" stroke-width="3"/>
+<path d="M954 274 A104 104 0 0 1 850 170" fill="none" stroke="#187A61" stroke-width="3"/>
+<path d="M850 170 A104 104 0 0 1 954 66" fill="none" stroke="#D5E3DE" stroke-width="3"/>
+<path d="M1051 155 L1058 170 L1065 155" fill="none" stroke="#187A61" stroke-width="3" stroke-linejoin="round"/>
+<path d="M857 185 L850 170 L843 185" fill="none" stroke="#187A61" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="954" cy="66" r="7" fill="#187A61"/>
+<circle cx="1058" cy="170" r="7" fill="#187A61"/>
+<circle cx="954" cy="274" r="7" fill="#AD792C"/>
+<circle cx="850" cy="170" r="7" fill="#187A61"/>
+<text x="954" y="155" text-anchor="middle" fill="#58746B" font-size="13" font-weight="650" letter-spacing="2">STANDING</text>
+<text x="954" y="187" text-anchor="middle" fill="#163C35" font-size="29" font-weight="650" letter-spacing="-.5">MISSION</text>
+<path d="M924 211 H984" stroke="#D5E3DE"/>
+</g>
+</svg>

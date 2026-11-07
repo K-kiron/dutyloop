@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="390" viewBox="0 0 600 390" role="img" aria-labelledby="title desc">
+<title id="title">The DutyLoop development loop</title>
+<desc id="desc">Discover, implement, verify, review, and commit accepted work. Then discover again.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"><rect x="1" y="1" width="598" height="388" rx="18" fill="#F3F7F5" stroke="#D5E3DE"/><rect x="30" y="30" width="240" height="90" rx="12" fill="#FFFFFF" stroke="#D5E3DE"/>
+<text x="48" y="59" fill="#187A61" font-size="14" font-weight="650">01</text>
+<text x="48" y="95" fill="#163C35" font-size="29" font-weight="650">Discover</text><rect x="330" y="30" width="240" height="90" rx="12" fill="#FFFFFF" stroke="#D5E3DE"/>
+<text x="348" y="59" fill="#187A61" font-size="14" font-weight="650">02</text>
+<text x="348" y="95" fill="#163C35" font-size="29" font-weight="650">Implement</text><rect x="330" y="150" width="240" height="90" rx="12" fill="#FFFFFF" stroke="#D5E3DE"/>
+<text x="348" y="179" fill="#187A61" font-size="14" font-weight="650">03</text>
+<text x="348" y="215" fill="#163C35" font-size="29" font-weight="650">Verify</text><rect x="30" y="150" width="240" height="90" rx="12" fill="#FFFFFF" stroke="#D5E3DE"/>
+<text x="48" y="179" fill="#187A61" font-size="14" font-weight="650">04</text>
+<text x="48" y="215" fill="#163C35" font-size="29" font-weight="650">Review</text><rect x="30" y="270" width="240" height="90" rx="12" fill="#FFFFFF" stroke="#D5E3DE"/>
+<text x="48" y="299" fill="#187A61" font-size="14" font-weight="650">05</text>
+<text x="48" y="335" fill="#163C35" font-size="29" font-weight="650">Commit</text><g fill="none" stroke="#187A61" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<path d="M280 75 H320 m-7 -7 7 7 -7 7"/>
+<path d="M450 127 V143 m-7 -7 7 7 7 -7"/>
+<path d="M320 195 H280 m7 -7 -7 7 7 7"/>
+<path d="M150 247 V263 m-7 -7 7 7 7 -7"/>
+<path d="M280 315 H320 m-7 -7 7 7 -7 7"/>
+</g>
+<rect x="330" y="270" width="240" height="90" rx="12" fill="#E0EEE7"/>
+<text x="348" y="305" fill="#58746B" font-size="14" font-weight="650">ACCEPTED WORK</text>
+<text x="348" y="338" fill="#187A61" font-size="25" font-weight="650">Discover again</text></g>
+</svg>
