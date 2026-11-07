@@ -1,30 +1,63 @@
-# DutyLoop
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
+    <img src="docs/assets/hero-light.svg" alt="DutyLoop — 交给开发 agent 一份持续职责" width="1200">
+  </picture>
+</p>
 
-**给开发 agent 一份持续负责的工作，让它在你设定的范围内主动推进项目。**
+<p align="center">
+  <strong>交给开发 agent 一份持续负责的工作。</strong><br>
+  发现工作 · 实施 · 验证 · 复核 · 持续迭代
+</p>
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [上手指南](docs/getting-started.md) · [配置参考](docs/configuration.md)
+<p align="center">
+  <a href="https://github.com/K-kiron/dutyloop/actions/workflows/ci.yml"><img src="https://github.com/K-kiron/dutyloop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.11+"></a>
+  <a href="#项目状态"><img src="https://img.shields.io/badge/status-alpha-D7A34B" alt="项目状态：Alpha"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3B8175" alt="MIT 许可"></a>
+</p>
 
-[![CI](https://github.com/K-kiron/dutyloop/actions/workflows/ci.yml/badge.svg)](https://github.com/K-kiron/dutyloop/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
-[![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+<p align="center">
+  <a href="README.md">English</a> · <strong>简体中文</strong><br>
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#运行项目任务">运行项目任务</a> ·
+  <a href="docs/getting-started.md">文档</a> ·
+  <a href="https://github.com/K-kiron/dutyloop/issues/new/choose">报告问题</a>
+</p>
 
-DutyLoop 围绕一个项目职责持续运行本地开发 agent：查看当前证据，判断什么值得做，定义任务，实施修改，运行你指定的检查，复核结果，再寻找下一项有价值的改进。完成一个任务后，它会继续工作，直到遇到预设限制、需要处理的阻塞，或者收到停止指令。
+---
 
-例如，你可以交给它“持续维护这个库的解析和导出功能的可靠性”。你一次性给定职责、范围、约束、验收命令和运行上限；DutyLoop 记录判断和执行过程，把通过检查的改动提交到独立的本地分支，供你审阅和采用。
+DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续职责工作。 给它一个仓库、一份职责说明和验收命令，它就会反复检查项目，选择有证据支持的工作，逐项实施改动。
 
-## 可以交给它什么工作
+通过验收的改动会积累在**独立的本地 Git 分支**上，并保留任务依据、检查结果和复核记录。 每项任务通过后，DutyLoop 会继续发现工作，直到达到运行上限、遇到阻塞，或收到你的停止指令。
 
-| 持续职责 | 可以使用的证据 | 预期产出 |
-| --- | --- | --- |
-| 维护库或 CLI 的可靠性 | 当前源码、测试、文档约定、已提交的缺陷复现材料 | 范围明确的修复和回归测试 |
-| 改善产品的一个指定区域 | 项目内的用户反馈、可复现的用户流程、明确的产品约束 | 带有验收标准的功能改进 |
-| 维护文档可用性 | 当前实现、示例和文档 | 经检查的说明修正和可运行示例 |
+## 工作流程
 
-职责需要包含足够的产品方向，让 agent 能判断改动是否有用。证据不足时，可以等待；缺少业务决定时，应报告阻塞。DutyLoop 本身没有内置用户反馈采集、竞品爬取或市场分析服务；它能使用哪些材料和工具，取决于你提供的环境和所选 agent 的实际能力。
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="docs/assets/workflow-mobile-dark.svg">
+  <source media="(max-width: 600px) and (prefers-color-scheme: light)" srcset="docs/assets/workflow-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/workflow-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/workflow-light.svg">
+  <img src="docs/assets/workflow-light.svg" alt="发现有证据支持的工作，在 worktree 中实施，运行操作者指定的检查，单独调用复核，再提交通过验收的改动并继续发现工作" width="1200">
+</picture>
 
-## 先运行本地演示
+你一次性定义职责和验收命令。DutyLoop 围绕现有的开发 CLI，管理 worktree、调用额度预留、 暂存快照检查、复核调用和持久状态。
 
-需要 **Python 3.11+**、**Git**，以及已配置的 Git 作者身份。当前从源码安装：
+| 能力 | 带来的作用 |
+| --- | --- |
+| **持续发现工作** | 1–3 个发现 agent 检查当前证据，提出带有验收标准的候选任务。 |
+| **专注交付** | 实施和接纳保持串行，每次尝试使用受管理的 worktree。 |
+| **由你掌握的检查** | 将暂存文件还原为可运行的快照后执行你的命令；检查期间发生改动时，不予接纳。 |
+| **可审阅的结果** | 已接纳的提交、经检查的 Git 树 ID、任务反馈，以及保留的拒绝或中断记录。 |
+| **持久控制** | SQLite 状态、审计事件、后台运行、显式停止和需确认的中断恢复。 |
+| **有上限的执行** | 限制调用次数和经过时间，并为实施及必需的复核预留调用额度。 |
+
+发布由你决定：运行时不会 push、创建 PR、合并或部署。 检查结果分支，再通过项目原有流程采用改动。
+
+## 快速开始
+
+**环境要求：**Python 3.11+、Git，以及已配置的 Git 作者身份。 建议使用虚拟环境；[安装说明](docs/getting-started.md#prerequisites)涵盖 Windows、macOS 和 Linux。 目前从源码仓库安装。
 
 ```console
 git clone https://github.com/K-kiron/dutyloop.git
@@ -33,15 +66,46 @@ python -m pip install -e .
 dutyloop demo --directory ../dutyloop-demo
 ```
 
-使用一个不存在或为空的演示目录。演示中的**脚本驱动器**会依次发现两个预设缺陷，实际的 supervisor 则负责创建 worktree、运行测试、接纳改动、继续探索，并在七次调用后停止。它不使用模型账号或 API key，验证的是运行流程，不能据此推断模型的判断质量。
+使用一个不存在或为空的演示目录，无需模型账号或 API key。 **脚本演示**使用真实的编排引擎、Git worktree 和测试命令：接纳两个预设缺陷的修复， 继续发现工作，并在七次调用后停止。驱动器及其判断均由脚本模拟。
 
-## 接入自己的项目
+返回的 JSON 包含以下内容：
 
-先通过开发工具自己的安装和登录流程，配置一个支持的 CLI。目标项目需要有已提交的 `HEAD`，并且能在新的 worktree 中运行检查。工作副本中尚未提交的改动不会自动成为任务输入。
+```json
+{
+  "simulated": true,
+  "accepted_tasks": 2,
+  "original_unchanged": true,
+  "accepted_tests_passed": true
+}
+```
 
-1. 把 [examples/mission.json](examples/mission.json) 复制到目标仓库之外。
-2. 填写项目绝对路径、具体的持续职责、允许改动的路径，以及适合项目的验收命令。
-3. 检查环境和配置，再初始化和运行：
+这里只展示演示结果的一部分。完整输出还包含任务快照和产物位置。 [验证记录](docs/validation.md)说明了离线检查与已认证宿主运行之间的区别。
+
+## 运行项目任务
+
+一份有用的职责说明，需要明确负责什么，以及哪些行为必须保持：
+
+> 维护 CSV 导入和导出的可靠性。针对文档约定的行为，修复可复现的缺陷并补充回归测试。
+> 保持公开 API 和文件格式不变。没有证据支持的工作时，等待。
+
+通过[受支持开发 CLI](#宿主适配器)自身的流程完成安装和认证。 选择一个已有提交 `HEAD`、且检查能在新 worktree 中运行的仓库。 把下面的内容保存为 `mission.json`，放在**目标仓库之外**：
+
+```json
+{
+  "mission": "Maintain CSV import/export reliability. Fix evidenced failures with regression tests. Preserve the public API and file format. Wait when there is no supported work.",
+  "project": "/absolute/path/to/project",
+  "allowed_paths": ["src", "tests"],
+  "verification": [
+    ["python", "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
+  ],
+  "driver": {"name": "codex"},
+  "limits": {"max_invocations": 12, "max_wall_seconds": 1800}
+}
+```
+
+按你的项目替换项目路径、允许改动的路径和检查命令。 Windows 路径可以使用正斜杠，例如 `C:/work/my-project`。 [完整示例](examples/mission.json)还提供约束、工作类型和重试设置； [配置参考](docs/configuration.md)介绍全部字段。
+
+检查环境和配置，然后初始化并运行：
 
 ```console
 dutyloop doctor --driver codex --project /absolute/path/to/project
@@ -50,7 +114,11 @@ dutyloop init --spec mission.json --state ../mission-state
 dutyloop run --state ../mission-state
 ```
 
-需要后台运行时，使用下面的命令替代 `run`：
+`doctor` 检查安装和版本，不验证认证状态，也不调用模型。 `init` 从已提交的 `HEAD` 创建职责分支和持久状态；未提交的改动不会复制到任务中。 状态目录应放在目标仓库之外，并确保新 worktree 能使用项目所需的依赖。
+
+### 监控与控制
+
+使用 `start` **替代 `run`**，启动后台进程：
 
 ```console
 dutyloop start --state ../mission-state
@@ -59,53 +127,73 @@ dutyloop events --state ../mission-state --limit 20
 dutyloop stop --state ../mission-state
 ```
 
-`stop` 发出异步取消请求，需要再次查看状态确认运行进程已经退出。状态目录必须位于目标仓库之外。[上手指南](docs/getting-started.md)还介绍了生成配置、检查结果分支和排查常见问题的方法。
+状态中可以看到职责分支、已接纳的提交、调用额度使用情况和任务结果。 停止是异步操作，需要再次查看状态确认完成。已经记录的停止状态不能通过重启清除。 [运行与排错](docs/operations.md)介绍阻塞、运行上限和中断处理。
 
-## 已实现的能力
+## 适合哪些工作
 
-- **持续发现工作：**1–3 个发现 agent 可以并行提出带有证据和验收标准的候选任务；实施和接纳保持串行。
-- **完整迭代流程：**实施和复核分别调用 agent，supervisor 把暂存快照还原到工作区后运行操作者指定的检查；检查修改了受跟踪内容或暂存树时，会停止接纳。
-- **可检查的 Git 产出：**任务在管理的 worktree 中执行，通过检查的提交进入职责分支；被拒绝或中断的尝试保留证据。
-- **持久状态与控制：**本地 SQLite 状态、事件记录、单一运行进程、显式中断恢复和后台运行。
-- **调用次数和经过时间限制：**启动调用前预留额度；停止请求会持久保存，并取消管理中的子进程。
-- **CLI 和可选 MCP 控制：**终端与手动配置的 MCP 客户端使用同一个执行引擎。
-
-运行时不会自动 push、创建 PR、合并到你的工作分支或部署。你可以通过项目原有流程审阅和采用产生的提交。
-
-## 集成范围和成熟度
-
-| 集成 | 当前支持 | 已验证范围 |
+| 持续职责 | 有用的输入 | 产出 |
 | --- | --- | --- |
-| Codex CLI | 原生结构化输出适配器 | 离线协议测试，以及一次已登录的真实小型项目运行 |
-| Claude Code CLI | 原生结构化输出适配器 | 离线协议测试；尚无已登录的完整运行记录 |
-| OpenCode CLI **2.2.5** | 固定版本的原生 JSON 事件适配器 | 对照源码的启动策略和离线协议测试；尚无已登录的完整运行记录 |
-| DeepSeek Harness **0.2.2-rc.1** | 固定版本的原生无交互适配器 | 对照源码的启动策略和离线协议测试；尚无已登录的完整运行记录 |
-| 自定义命令 | 已公开的 JSON 包装协议 | 需要你提供并验证宿主包装器 |
-| MCP 客户端 | 可选本地 stdio 控制服务 | 官方 SDK 协议测试；需要手动配置客户端 |
+| **库或 CLI 维护** | 源码、测试、文档约定、可复现的缺陷 | 范围明确的修复和回归测试 |
+| **产品的指定区域** | 已提交的反馈、可复现的用户流程、明确的产品约束 | 带有验收标准的改动 |
+| **文档维护** | 当前实现、示例和文档 | 经检查的修正和可运行示例 |
 
-一个宿主支持 MCP，不代表它已经获得原生开发编排支持。完整边界见[宿主支持与限制](docs/limits-and-hosts.md)、[适配协议](docs/adapter-protocol.md)和[验证记录](docs/validation.md)。
+提供所选 agent 判断工作所需的证据和业务方向。证据不足时可以等待； 缺少产品决定时可以报告阻塞。 与其他编排工具的源码对照见[同类方案](docs/alternatives.md)。
 
-OpenCode 和 DeepSeek Harness 会在启动模型工作前拒绝不匹配的版本。DeepSeek Harness 使用已有的 headless 配置，应省略 `driver.model`。OpenHands 等其他运行时目前需要操作者自行提供包装器。
+## 宿主适配器
 
-DutyLoop 目前处于早期阶段。supervisor 的控制行为有自动化测试覆盖；长期运行的有效性、对维护者工作量的改善，仍需在真实项目中验证。[已有同类工具](docs/alternatives.md)包括 AUTOPILOT、OpenClaw、Paperclip 和 Symphony。DutyLoop 选择小型本地职责配置和可检查状态的实现方式，尚无优于这些工具的对照实验结果。
+DutyLoop 使用现有的宿主安装和认证。通过 `driver.name` 选择适配器； 可选的 MCP 控制接口使用同一个任务引擎。
 
-## 无人值守运行前需要了解的边界
+| 集成 | 适配方式 | 验证覆盖 |
+| --- | --- | --- |
+| **Codex CLI** | 原生结构化输出 | 离线协议测试，以及一次历史记录中的已认证小型测试项目运行 |
+| **Claude Code CLI** | 原生结构化输出 | 离线协议测试 |
+| **OpenCode 2.2.5** | 固定版本的原生 JSON 事件 | 固定版本源码检查和离线协议测试 |
+| **DeepSeek Harness 0.2.2-rc.1** | 固定版本的原生无交互执行 | 固定版本源码检查和离线协议测试 |
+| **自定义命令** | 操作者提供的 JSON 包装器 | 由你验证包装器及其宿主 |
+| **MCP 客户端** | 可选的本地 stdio 控制 | 官方 SDK 协议测试；客户端需手动配置 |
 
-**额度：**`max_invocations` 统计驱动器调用，不单独统计 CLI 内部的模型请求或子 agent。`max_wall_seconds` 包括等待和首次运行之后的离线时间。**不支持美元硬预算**；无法获得的费用保持未知。
+OpenCode 和 DeepSeek Harness 会在启动模型工作前拒绝不支持的版本。 DeepSeek Harness 使用已有的 headless 配置，应省略 `driver.model`。 Claude、OpenCode 和 DeepSeek Harness 尚无已认证的完整任务运行记录。 OpenHands 等其他宿主目前需要自定义包装器。
 
-**权限：**允许路径是接纳改动时的检查规则。worktree 不会隔离文件系统、网络、凭据或共享 Git 元数据。子进程使用其宿主环境的权限。需要这些隔离时，应另行使用受限账号、容器或虚拟机。
+<details>
+<summary><strong>使用可选的 MCP 控制</strong></summary>
 
-**验收：**你配置的验收命令会执行项目代码。agent 能改写的测试不构成独立的验收依据；额外一次模型复核也不能证明用户价值。尽量把决定性的检查放在不可改写的路径中。状态和日志可能包含私有项目资料，应妥善保存。
+```console
+python -m pip install -e ".[mcp]"
+dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
+```
 
-详细说明见[运行边界](docs/limits-and-hosts.md)。
+提供的工具包括 `mission_create`、`mission_start`、`mission_status`、`mission_events` 和 `mission_stop`。创建任务不会启动工作。按照 [MCP 配置](docs/mcp.md)设置客户端和项目白名单。 宿主支持 MCP，并不代表它拥有原生执行适配器。
 
-## 文档与贡献
+</details>
 
-- [上手指南](docs/getting-started.md)：首次运行及结果分支检查。
-- [配置参考](docs/configuration.md)：全部字段、默认值和示例。
-- [运行与排错](docs/operations.md)：状态、事件、限额、中断和恢复。
-- [MCP 配置](docs/mcp.md)：客户端手动配置及控制权限。
-- [架构](docs/architecture.md)：发现、接纳、持久状态和失败处理。
-- [贡献指南](CONTRIBUTING.md)：开发检查和集成要求。
+## 项目状态
 
-采用 MIT 许可。欢迎通过 [GitHub Issues](https://github.com/K-kiron/dutyloop/issues)报告可复现的问题和具体宿主兼容情况。
+**Alpha 阶段，运行边界明确。**离线行为测试、脚本端到端演示和已记录的宿主检查， 覆盖了特定的控制约定。长期有效性和维护者工作量的改善仍需在真实项目中评估； 尚无对照结果证明其效果优于其他方案。
+
+- **运行上限：**调用次数统计外层驱动器调用，不逐一统计宿主请求或子 agent。
+  时间上限包括首次运行后的等待和离线时间。
+- **费用：**不支持美元硬上限。无法获得的用量或费用保持未知。
+- **权限：**允许路径约束的是改动接纳。worktree 仍使用宿主的文件系统、网络、凭据和 Git 访问权限，不构成沙箱。
+- **验收：**使用可信且不修改受检内容的检查命令。agent 能改写的测试和单独一次模型复核，不能构成独立的正确性依据。
+
+请将任务状态和执行记录保密保存。选择无人值守运行的范围前，阅读 [运行限制与宿主支持](docs/limits-and-hosts.md)和[验证记录](docs/validation.md)。
+
+## 文档
+
+| 指南 | 适用场景 |
+| --- | --- |
+| [上手指南](docs/getting-started.md) | 准备项目、运行任务并检查结果分支 |
+| [配置参考](docs/configuration.md) | 设置路径、检查、约束、驱动器和运行上限 |
+| [示例](examples/README.md) | 调整维护或文档任务配置 |
+| [运行与排错](docs/operations.md) | 监控事件、停止工作和处理恢复 |
+| [适配协议](docs/adapter-protocol.md) | 编写宿主包装器或了解原生适配约定 |
+| [架构](docs/architecture.md) | 了解发现、接纳和状态持久化 |
+| [更新记录](CHANGELOG.md) | 查看项目变化 |
+
+## 参与贡献
+
+可复现的问题报告、适配器协议测试和经过检查的示例，都很有帮助。 欢迎携带脱敏后的复现材料或具体工作流程[提交 issue](https://github.com/K-kiron/dutyloop/issues/new/choose)， 也可以阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，了解开发环境和必需的检查。 默认测试使用本地测试项目和模拟驱动器；已认证的宿主实验应单独标明。
+
+## 许可
+
+[MIT](LICENSE) · Copyright © 2026 Wenhao XU.
