@@ -286,6 +286,18 @@ class Supervisor:
                 changes = check_scope(workspace, self.spec["allowed_paths"], self.spec["max_changed_files"])
                 if not changes:
                     raise ValueError("Implementation made no changes")
+                diff = staged_diff(workspace)
+                verified_tree = git(workspace, "write-tree")
+                # Drop cached stat data so checkout cannot retain pre-filter bytes.
+                git(workspace, "read-tree", "--empty")
+                git(workspace, "read-tree", verified_tree)
+                git(workspace, "checkout-index", "--all", "--force")
+                guard_identity()
+                check_scope(workspace, self.spec["allowed_paths"], self.spec["max_changed_files"])
+                if git(workspace, "write-tree") != verified_tree:
+                    self.store.set_status("blocked", "staging_modified_snapshot")
+                    raise RuntimeError("Materializing the staged snapshot changed its tree")
+                before_verification = fingerprint(workspace)
                 self.store.update_task(task_id, "verifying")
                 checks = []
                 for index, argv in enumerate(self.spec["verification"]):
@@ -299,14 +311,20 @@ class Supervisor:
                         raise RuntimeError("Verification process cleanup could not be confirmed")
                     if gate.cancelled or self.stopped():
                         raise _NoDispatch()
+                    guard_identity()
+                    if fingerprint(workspace) != before_verification or git(workspace, "write-tree") != verified_tree:
+                        self.store.event("verification", {"task_id": task_id, "checks": checks, "passed": False,
+                                                          "reason": "verification_modified_workspace", "tree": verified_tree})
+                        self.store.set_status("blocked", "verification_modified_workspace")
+                        raise RuntimeError("Operator verification modified its worktree or staged tree")
                     if gate.returncode or gate.error or gate.timed_out or gate.output_truncated:
                         self.store.event("verification", {"task_id": task_id, "checks": checks, "passed": False})
                         raise ValueError(f"Operator verification failed: {json.dumps(checks[-1])}")
                 check_scope(workspace, self.spec["allowed_paths"], self.spec["max_changed_files"])
                 guard_identity()
-                diff = staged_diff(workspace)
-                before_review = fingerprint(workspace)
-                reviewed_tree = git(workspace, "write-tree")
+                self.store.event("verification", {"task_id": task_id, "checks": checks, "passed": True, "tree": verified_tree})
+                before_review = before_verification
+                reviewed_tree = verified_tree
                 review = self.invoke("review", workspace, self.prompt(
                     "Independently review this task, its user value, all acceptance criteria and the exact staged diff. "
                     "Inspect files and evidence. Do not edit files or treat the implementer's claims as proof. "
@@ -321,10 +339,11 @@ class Supervisor:
                 if self.stopped():
                     raise _NoDispatch()
                 check_scope(workspace, self.spec["allowed_paths"], self.spec["max_changed_files"])
-                head = prepare_commit(workspace, candidate["title"], candidate["kind"])
+                head = prepare_commit(workspace, candidate["title"], candidate["kind"],
+                                      expected_tree=reviewed_tree, expected_base=snapshot["accepted_head"])
                 if not self.store.integrate(task_id, head, snapshot["accepted_head"],
                     lambda: git(Path(self.spec["project"]), "update-ref", f"refs/heads/{snapshot['branch']}", head, snapshot["accepted_head"]),
-                    review=review, checks=checks, feedback=feedback):
+                    review=review, checks=checks, verified_tree=verified_tree, feedback=feedback):
                     raise _NoDispatch()
                 self.store.event("task_accepted", {"task_id": task_id, "commit_sha": head})
                 return

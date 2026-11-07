@@ -85,7 +85,8 @@ includes mission generation, inspecting the resulting branch, and troubleshootin
 - **Continuous discovery:** one to three discovery workers propose evidenced
   candidates with acceptance criteria; implementation stays serial.
 - **A complete delivery loop:** separate implementation and review invocations,
-  plus operator-supplied verification commands run by the supervisor.
+  plus operator-supplied checks against a materialized staged snapshot. Checks
+  that change tracked content or the staged tree stop acceptance.
 - **Inspectable Git output:** managed task worktrees, accepted commits on a
   mission branch, and retained evidence for rejected or interrupted attempts.
 - **Persistent control:** local SQLite state, event history, exclusive runner

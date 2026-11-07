@@ -56,6 +56,21 @@ Verification is run by the supervisor using the configured argv, and review is
 a separate driver invocation. A review from the same model is not an
 independent human or an infallible correctness oracle.
 
+Before verification, the supervisor stages the implementation and materializes
+the staged files using Git's checkout conversions. This includes custom
+clean/smudge filters, so a check does not silently test pre-staging bytes that
+will be transformed in the commit. Each command must leave the tracked content
+and staged tree unchanged; a mutation blocks the mission and retains the
+materialized attempt. Formatting or code generation that edits source belongs
+in implementation, followed by non-mutating verification commands.
+
+The verified tree is recorded in successful verification events and accepted
+task records. Review and commit must preserve that tree. Assume-unchanged and
+skip-worktree index flags are rejected before staging because they can conceal
+dependencies and out-of-scope changes. Materialization does not clear ignored
+artifacts or recursively restore submodules; this is not a fresh-environment
+test or an OS sandbox.
+
 Accepted work advances the mission's branch and accepted commit. It does not
 finish the mission. Rejected or uncertain attempts remain inspectable. The
 supervisor does not switch or edit the original checkout. Child tools retain

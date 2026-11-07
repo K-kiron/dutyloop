@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Stage and materialize task files before verification, including Git filter
+  conversions. Block verification commands that change tracked content or the
+  staged tree, and record the verified tree in events and accepted tasks.
+- Reject hidden assume-unchanged/skip-worktree index flags, detect file-mode
+  changes during checks, and refuse to commit a staged tree or base that changed
+  after review. Rejected attempts remain inspectable.
+
 ## 0.2.0 — Unreleased
 
 - Add configuration generation and read-only validation, bounded installation

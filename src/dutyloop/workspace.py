@@ -88,6 +88,9 @@ def assert_identity(path: Path, expected_head: str, git_file: bytes):
 
 
 def changed_paths(path: Path) -> list[str]:
+    entries = git(path, "ls-files", "-v", "-z").split("\x00")
+    if any(entry and (entry[0].islower() or entry[0] == "S") for entry in entries):
+        raise ValueError("Unsupported assume-unchanged or skip-worktree index flags; inspect retained worktree")
     tracked = git(path, "diff", "--no-renames", "--name-only", "-z", "HEAD").split("\x00")
     untracked = git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\x00")
     return sorted(set(item for item in tracked + untracked if item))
@@ -109,8 +112,12 @@ def fingerprint(path: Path) -> str:
     digest = hashlib.sha256()
     for item in changed_paths(path):
         target = plain_path(path / relative_path(item))
-        digest.update(item.encode())
-        digest.update(target.read_bytes() if target.is_file() else b"<deleted>")
+        mode = target.stat().st_mode if target.exists() else 0
+        content = target.read_bytes() if target.is_file() else b""
+        digest.update(item.encode() + b"\x00")
+        digest.update(str(mode).encode() + b"\x00")
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
     return digest.hexdigest()
 
 
@@ -122,16 +129,18 @@ def staged_diff(path: Path) -> str:
     return diff
 
 
-def prepare_commit(path: Path, title: str, kind: str):
+def prepare_commit(path: Path, title: str, kind: str, *, expected_tree: str, expected_base: str):
     title = " ".join(title.split())[:140]
     if re.search(r"generated (?:by|with)|written by ai|co-authored-by|https?://(?:chatgpt\.com|claude\.ai)/", title, re.I):
         raise ValueError("Commit title contains prohibited attribution or a private conversation link")
-    tree = git(path, "write-tree")
-    base = git(path, "rev-parse", "HEAD")
+    if git(path, "write-tree") != expected_tree:
+        raise RuntimeError("The staged tree differs from the reviewed tree; integration refused")
+    if git(path, "rev-parse", "HEAD") != expected_base:
+        raise RuntimeError("The worktree HEAD differs from the reviewed base; integration refused")
     git(path, "commit", "-m", f"{kind}: {title}")
     head = git(path, "rev-parse", "HEAD")
-    if git(path, "rev-list", "--parents", "--max-count=1", head).split() != [head, base]:
+    if git(path, "rev-list", "--parents", "--max-count=1", head).split() != [head, expected_base]:
         raise RuntimeError("A commit hook changed the reviewed ancestry; integration refused")
-    if git(path, "rev-parse", "HEAD^{tree}") != tree:
+    if git(path, "rev-parse", "HEAD^{tree}") != expected_tree:
         raise RuntimeError("A commit hook changed the reviewed tree; integration refused")
     return head
