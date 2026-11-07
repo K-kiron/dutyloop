@@ -43,6 +43,13 @@ invocation usage, runner PID, task results, and per-call output directories.
 `reported_cost_usd` sums only known reports. Check `calls_without_cost`; an
 unknown call is not a zero-dollar call.
 
+Successful verification events include the staged Git `tree`; accepted tasks
+also record `verified_tree`. These identify the snapshot held through review
+and commit. Checks run after staged files have been materialized using Git's
+checkout rules. They must not edit tracked files, add unignored files, or change
+the index. Use formatter check modes and put source-generating steps in the
+implementation workflow. Ignored build/test output may remain in the worktree.
+
 ## Lifecycle states
 
 | State | Interpretation | Usual next action |
@@ -114,6 +121,9 @@ commit you choose.
 | `State directory must be outside...` | Relationship of resolved project/state paths. | Select a sibling/private state directory; neither may contain the other. |
 | Branch already exists | `git branch --list` and spec `branch`. | Use a new branch or omit the field for a unique generated name. |
 | No accepted changes | Candidate rejection, failed verification, rejected review, or no useful evidence. | Inspect events/task feedback. Improve the mission/checks only through a new explicit mission. |
+| `verification_modified_workspace` | A check changed tracked content, added unignored files, or changed the staged tree. | Inspect the retained attempt and failed verification event. Use non-mutating check commands in a new mission; recovery does not clear this blocker. |
+| `staging_modified_snapshot` | Materializing staged files changed their staged tree, for example through a custom filter's side effect. | Inspect Git attributes, filter configuration, and retained work before creating a new mission. |
+| Unsupported index flags | Assume-unchanged or skip-worktree hid tracked content. | Inspect the retained attempt and flags with `git ls-files -v`; such attempts are rejected before staging. |
 | `unclean_interruption` | Unsettled runner, call, or verifying task. | Inspect artifacts and acknowledge recovery; do not delete the lock to steal ownership. |
 | `integration_ref_changed` | Someone or a child changed the shared branch ref. | Inspect Git history; select a trustworthy commit and initialize a new mission. |
 | Cleanup unconfirmed | Call/check result and platform process permissions. | Investigate surviving processes; do not automatically retry uncertain work. |

@@ -16,7 +16,7 @@ The complete starter is [examples/mission.json](../examples/mission.json).
 | `mission` | Nonempty string, at most 20,000 characters | The continuing responsibility and how to judge useful work. |
 | `project` | String | Exact root of an existing Git repository with a committed `HEAD`. Prefer an absolute path. |
 | `allowed_paths` | Nonempty array of strings | Repository-relative file/directory prefixes whose changes may be accepted. |
-| `verification` | Nonempty array of argv arrays | Operator-supplied commands run for each implementation attempt, in order. Every argv element must be a nonempty string. |
+| `verification` | Nonempty array of argv arrays | Operator-supplied commands run for each materialized staged snapshot, in order. They must preserve tracked content and the staged tree. Every argv element must be a nonempty string. |
 | `limits.max_invocations` | Integer, at least 1 | Total reserved discovery, implementation, and review calls. |
 | `limits.max_wall_seconds` | Finite number, at least 0.1 | Elapsed window from first run, including waiting and subsequent downtime. |
 
