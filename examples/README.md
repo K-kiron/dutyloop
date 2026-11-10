@@ -8,6 +8,7 @@ results on your project.
 | --- | --- | --- |
 | [mission.json](mission.json) | Bounded public-API reliability and usability maintenance. | Project path, scope, and unittest verification command. |
 | [documentation-mission.json](documentation-mission.json) | Correct documentation/examples without changing product behavior. | Project path and the operator-owned documentation checker. |
+| [issues.json](issues.json) | Plan and implement a captured GitHub issue backlog with Claude Code; delivery defaults to local. | Project, repository, scope, checks, and optional delivery policy. |
 
 The documentation checker in the second example is a placeholder; DutyLoop
 does not supply a universal documentation oracle. Choose checks that test your
@@ -24,3 +25,7 @@ Each named branch must be new. Omit `branch` to generate a unique name. A missio
 starts from committed `HEAD`; uncommitted source and ignored local files are not
 copied into task worktrees. Read [configuration](../docs/configuration.md) for
 field meanings and [operations](../docs/operations.md) for inspecting outputs.
+
+Issue batches use `dutyloop issues init` and `dutyloop issues run` instead of the
+standing mission commands above. See [the issue workflow](../docs/issues.md) for
+planning, decisions, persistent budgets, and opt-in GitHub delivery.

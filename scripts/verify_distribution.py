@@ -28,6 +28,13 @@ def main() -> None:
                        cwd=directory, env=environment, check=True, timeout=60)
         version = subprocess.check_output([str(executable), "-m", "dutyloop", "--version"],
                                           cwd=directory, env=environment, text=True, timeout=10)
+        issue_help = subprocess.check_output([str(executable), "-m", "dutyloop", "issues", "run", "--help"],
+                                             cwd=directory, env=environment, text=True, timeout=10)
+        if "--plan-only" not in issue_help:
+            raise RuntimeError("Installed wheel is missing the issue workflow CLI")
+        # Import the actual issue controller outside source without contacting GitHub.
+        subprocess.run([str(executable), "-c", "from dutyloop import issues; assert callable(issues.run)"],
+                       cwd=directory, env=environment, check=True, timeout=10)
         demo = subprocess.run([str(executable), "-m", "dutyloop", "demo", "--directory", str(directory / "demo")],
                               cwd=directory, env=environment, text=True, capture_output=True, timeout=180)
         if demo.returncode:
@@ -38,7 +45,7 @@ def main() -> None:
             raise RuntimeError("Installed wheel did not complete the expected bounded demonstration")
         print(json.dumps({"version": version.strip(), "wheel": wheels[-1].name, "simulated": True,
                           "accepted_tasks": outcome["accepted_tasks"], "original_unchanged": True,
-                          "verified": True, "model_calls": 0}))
+                          "verified": True, "issue_cli": True, "model_calls": 0}))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,33 @@ control-flow behavior, not long-term autonomous effectiveness or customer value.
 Raw mission state, account metadata, and host transcripts are kept private and
 are not included in this repository.
 
+## Issue workflow evidence on 2026-11-10
+
+The issue tests use real temporary Git repositories, local bare remotes, and
+operator verification processes, with simulated host responses and GitHub APIs.
+They exercise backlog snapshots, dependencies, per-issue decisions, persistent
+limits, CI repairs, PR metadata readback, merge/closure refusal boundaries, and
+explicit recovery without replaying uncertain effects. One complete simulated
+merge/closure path also retains the production Git process-containment layer;
+the queue-policy tests use synchronous Git while retaining contained operator
+checks. Process and mission tests cover cancellation, hooks, and deadlines
+separately. This is not an authenticated coding or GitHub delivery experiment.
+
+A read-only CLI initialization against `K-kiron/dutyloop` succeeded on this date.
+It captured zero open issues, made zero model calls, and used local delivery.
+This verifies repository access and an empty-backlog response through the actual
+GitHub CLI, not live issue/comment pagination, coding, CI, merging, or closure.
+
+Reproduce the offline issue checks with:
+
+```console
+python -m pytest -q tests/test_github.py tests/test_issue_config.py tests/test_issue_store.py tests/test_issue_cli.py tests/test_issue_workflow.py tests/test_issue_safety.py tests/test_selected_task.py
+```
+
+The installed-wheel smoke check also imports the issue controller and checks
+the issue CLI outside the source checkout. Live host and delivery claims remain
+limited to the separately labeled historical records below.
+
 ## Readiness verification on 2026-11-05
 
 The version-0.2.0 work was checked locally on Windows/Python 3.11:

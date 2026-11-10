@@ -69,7 +69,9 @@ class ProcessTests(unittest.TestCase):
         script = ("import subprocess,sys,time,pathlib; "
                   "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
                   f"pathlib.Path({str(marker)!r}).write_text(str(p.pid)); time.sleep(60)")
-        result = self.run_child(script, timeout_seconds=0.7)
+        # Leave time for both interpreters to start on Windows before testing
+        # descendant termination; the workload still runs far past the deadline.
+        result = self.run_child(script, timeout_seconds=2)
         self.assertTrue(result.timed_out)
         self.assertTrue(marker.is_file(), result.error)
         self.assert_dead(int(marker.read_text()))
