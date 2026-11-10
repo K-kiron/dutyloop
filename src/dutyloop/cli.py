@@ -30,13 +30,17 @@ def _reject_link(path: Path) -> None:
         raise ValueError(f"Symlinks and reparse points are not allowed: {path}")
 
 
-def start_background(state_dir: Path) -> dict:
+def start_background(state_dir: Path, *, issue_batch=False) -> dict:
     """Launch a runner without waiting; the engine enforces exclusive ownership."""
     state_dir = Path(state_dir).expanduser().absolute()
     for path in (state_dir, *state_dir.parents):
         _reject_link(path)
     state_dir = state_dir.resolve()
-    snapshot = _engine().status(state_dir)
+    if issue_batch:
+        from . import issues
+        snapshot = issues.status(state_dir)
+    else:
+        snapshot = _engine().status(state_dir)
     if snapshot.get("status") in {"stopped", "limited", "blocked"} or snapshot.get("stop_requested"):
         raise ValueError("This mission cannot restart after stopping, reaching a limit, or becoming blocked.")
 
@@ -55,7 +59,7 @@ def start_background(state_dir: Path) -> dict:
         options["start_new_session"] = True
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         process = subprocess.Popen(
-            [sys.executable, "-m", "dutyloop", "run", "--state", str(state_dir)],
+            [sys.executable, "-m", "dutyloop", *(["issues"] if issue_batch else []), "run", "--state", str(state_dir)],
             stdout=stdout,
             stderr=stderr,
             **options,
@@ -82,6 +86,25 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dutyloop", description=__doc__)
     parser.add_argument("--version", action="version", version=f"DutyLoop {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+    backlog = commands.add_parser("issues", help="Plan and process a finite GitHub issue backlog")
+    issue_commands = backlog.add_subparsers(dest="issue_command", required=True)
+    for name in ("init", "run", "start", "status", "stop", "events", "recover", "resolve"):
+        item = issue_commands.add_parser(name)
+        item.add_argument("--state", type=Path, required=True)
+        if name == "init":
+            item.add_argument("--spec", type=Path, required=True)
+        if name == "run":
+            item.add_argument("--plan-only", action="store_true")
+        if name == "status":
+            item.add_argument("--human", action="store_true")
+        if name == "events":
+            item.add_argument("--after", type=int, default=0)
+            item.add_argument("--limit", type=int, default=20)
+        if name == "recover":
+            item.add_argument("--acknowledge", action="store_true")
+        if name == "resolve":
+            item.add_argument("--number", type=int, required=True)
+            item.add_argument("--decision", required=True)
     configure = commands.add_parser("configure", help="Write a validated mission configuration without starting work")
     configure.add_argument("--project", type=Path, required=True)
     configure.add_argument("--output", type=Path, required=True)
@@ -129,6 +152,35 @@ def _parser() -> argparse.ArgumentParser:
 
 def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
     command = arguments.command
+    if command == "issues":
+        from . import issues
+        action = arguments.issue_command
+        if action == "init":
+            from .onboarding import read_spec
+            return issues.initialize(read_spec(arguments.spec), arguments.state)
+        if action == "run":
+            return issues.run(arguments.state, plan_only=arguments.plan_only)
+        if action == "start":
+            return start_background(arguments.state, issue_batch=True)
+        if action == "status":
+            snapshot = issues.status(arguments.state)
+            if not arguments.human:
+                return snapshot
+            lines = [f"DutyLoop issues: {snapshot['status']}",
+                     f"Repository: {snapshot['spec']['github']['repository']}",
+                     f"Delivery: {snapshot['spec']['github']['delivery']}",
+                     f"Calls: {snapshot['invocations']}/{snapshot['spec']['limits']['max_invocations']}"]
+            lines.extend(f"#{row['number']} [{row['state']}] {row['source']['title']}"
+                         + (f" — {row['reason']}" if row.get("reason") else "") for row in snapshot["issues"])
+            return "\n".join(lines)
+        if action == "stop":
+            return issues.stop(arguments.state)
+        if action == "events":
+            return issues.events(arguments.state, after_id=arguments.after, limit=arguments.limit)
+        if action == "recover":
+            return issues.recover(arguments.state, acknowledge=arguments.acknowledge)
+        if action == "resolve":
+            return issues.resolve(arguments.state, arguments.number, arguments.decision)
     if command in {"configure", "validate", "init"}:
         from .onboarding import read_spec, validation_report, write_configuration
     if command == "configure":

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a finite GitHub issue workflow with backlog/comment snapshots, read-only
+  planning, dependency-aware batches, per-issue branches, decision handling,
+  persistent shared budgets, and explicit interruption recovery.
+- Add opt-in PR and CI-gated merge delivery, head-bound merge requests,
+  post-merge tree and command verification, and optional confirmed issue closure.
+  Default issue delivery stays local; coverage uses offline fixtures, without an
+  authenticated real-project batch.
+- Add `dutyloop issues` CLI controls, a Claude Code configuration example, and
+  an issue workflow guide. Existing MCP tools continue to control missions only.
 - Stage and materialize task files before verification, including Git filter
   conversions. Block verification commands that change tracked content or the
   staged tree, and record the verified tree in events and accepted tasks.

@@ -22,6 +22,7 @@
   <a href="README.md">English</a> · <strong>简体中文</strong><br>
   <a href="#快速开始">快速开始</a> ·
   <a href="#运行项目任务">运行项目任务</a> ·
+  <a href="#处理-github-issue">处理 issue</a> ·
   <a href="docs/getting-started.md">文档</a> ·
   <a href="https://github.com/K-kiron/dutyloop/issues/new/choose">报告问题</a>
 </p>
@@ -31,6 +32,8 @@
 DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续职责工作。 给它一个仓库、一份职责说明和验收命令，它就会反复检查项目，选择有证据支持的工作，逐项实施改动。
 
 通过验收的改动会积累在**独立的本地 Git 分支**上，并保留任务依据、检查结果和复核记录。 每项任务通过后，DutyLoop 会继续发现工作，直到达到运行上限、遇到阻塞，或收到你的停止指令。
+
+已有待办 issue 时，可以使用 [issue 模式](#处理-github-issue)：捕获 GitHub 开放 issue，规划并实施可执行的工作，将需要你决定的事项单独保留。默认产出本地分支；也可以明确配置创建 PR、等待 CI 后合并，以及验收后关闭 issue。
 
 ## 工作流程
 
@@ -53,7 +56,7 @@ DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续�
 | **持久控制** | SQLite 状态、审计事件、后台运行、显式停止和需确认的中断恢复。 |
 | **有上限的执行** | 限制调用次数和经过时间，并为实施及必需的复核预留调用额度。 |
 
-发布由你决定：运行时不会 push、创建 PR、合并或部署。 检查结果分支，再通过项目原有流程采用改动。
+持续职责模式产出本地分支，不会 push、创建 PR、合并或部署。issue 模式同样默认保留本地产出，并提供单独配置的 GitHub 交付流程。
 
 ## 快速开始
 
@@ -129,6 +132,25 @@ dutyloop stop --state ../mission-state
 
 状态中可以看到职责分支、已接纳的提交、调用额度使用情况和任务结果。 停止是异步操作，需要再次查看状态确认完成。已经记录的停止状态不能通过重启清除。 [运行与排错](docs/operations.md)介绍阻塞、运行上限和中断处理。
 
+## 处理 GitHub issue
+
+准备已有代码库、已认证的开发 CLI，以及已认证的 GitHub CLI（`gh`）。将 [issue 配置示例](examples/issues.json)复制到目标仓库之外，替换项目路径、GitHub 仓库、允许修改的路径和检查命令；保留 `github.delivery: "local"`，先获取本地结果：
+
+```console
+dutyloop issues init --spec issues.json --state ../issue-state
+dutyloop issues run --state ../issue-state --plan-only
+dutyloop issues status --state ../issue-state --human
+dutyloop issues run --state ../issue-state
+```
+
+初始化会捕获当前开放 issue 及其评论，不调用模型，也不修改 GitHub。规划会消耗整个批次共用的调用额度。执行遵循 issue 依赖，使用与持续职责相同的验证和复核流程，将 `needs_decision` 事项留给你，并继续处理其他可执行工作。`queue.batch_size` 限制单次运行处理的 issue 数量；总调用额度和时间上限跨多次运行保留。
+
+将 `github.delivery` 设为 `pull_request` 可发布 PR；设为 `merge` 并明确指定 `required_checks`，可等待 CI 后合并。启用 `close_issues: true` 后，合并模式会核对合并后的 Git 树并重新运行你的检查，再关闭需求未变化的 issue。运行或启动批次，即授权执行配置中选定的交付操作。结果不明的操作需要检查；一轮完成也可能仍有未解决的 issue。
+
+自动合并还要求能够读取仓库已有的分支保护规则：必需检查要求分支保持最新，且对管理员同样生效。DutyLoop 不会修改这项策略；本地和 PR 模式不要求该规则。
+
+[issue 工作流指南](docs/issues.md)介绍完整配置、后台运行、人工决定、中断恢复和交付边界。目前覆盖来自离线验证，尚未验证已认证的真实项目 issue 批次。
+
 ## 适合哪些工作
 
 | 持续职责 | 有用的输入 | 产出 |
@@ -162,13 +184,15 @@ python -m pip install -e ".[mcp]"
 dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 ```
 
-提供的工具包括 `mission_create`、`mission_start`、`mission_status`、`mission_events` 和 `mission_stop`。创建任务不会启动工作。按照 [MCP 配置](docs/mcp.md)设置客户端和项目白名单。 宿主支持 MCP，并不代表它拥有原生执行适配器。
+提供的工具包括 `mission_create`、`mission_start`、`mission_status`、`mission_events` 和 `mission_stop`。创建任务不会启动工作。按照 [MCP 配置](docs/mcp.md)设置客户端和项目白名单。MCP 接口控制持续职责任务；issue 批次使用 CLI。宿主支持 MCP，并不代表它拥有原生执行适配器。
 
 </details>
 
 ## 项目状态
 
 **Alpha 阶段，运行边界明确。**离线行为测试、脚本端到端演示和已记录的宿主检查， 覆盖了特定的控制约定。长期有效性和维护者工作量的改善仍需在真实项目中评估； 尚无对照结果证明其效果优于其他方案。
+
+issue 工作流已有离线队列和交付验证，尚无已认证的真实项目批次记录。Claude Code 各阶段使用新进程，可读取已提交的项目指令；续接现有对话和加载特定安装环境的自动记忆尚未验证。
 
 - **运行上限：**调用次数统计外层驱动器调用，不逐一统计宿主请求或子 agent。
   时间上限包括首次运行后的等待和离线时间。
@@ -184,6 +208,7 @@ dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 | --- | --- |
 | [上手指南](docs/getting-started.md) | 准备项目、运行任务并检查结果分支 |
 | [配置参考](docs/configuration.md) | 设置路径、检查、约束、驱动器和运行上限 |
+| [GitHub issue](docs/issues.md) | 规划待办、处理人工决定，配置 PR 与合并交付 |
 | [示例](examples/README.md) | 调整维护或文档任务配置 |
 | [运行与排错](docs/operations.md) | 监控事件、停止工作和处理恢复 |
 | [适配协议](docs/adapter-protocol.md) | 编写宿主包装器或了解原生适配约定 |

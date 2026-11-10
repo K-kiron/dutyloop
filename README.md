@@ -22,6 +22,7 @@
   <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
   <a href="#quick-start">Quick start</a> ·
   <a href="#run-a-project-mission">Run a mission</a> ·
+  <a href="#process-github-issues">Process issues</a> ·
   <a href="docs/getting-started.md">Documentation</a> ·
   <a href="https://github.com/K-kiron/dutyloop/issues/new/choose">Report an issue</a>
 </p>
@@ -31,6 +32,8 @@
 DutyLoop is a local supervisor for coding agents with an ongoing job to do. Give it a repository, a mission, and your checks. It repeatedly inspects the project, selects work supported by evidence, and develops one change at a time.
 
 Accepted changes accumulate on a **separate local Git branch**, with task rationale, verification results, and review records. Discovery continues after each accepted task, until a limit, blocker, or your stop command ends the run.
+
+Already have a backlog? [Issue mode](#process-github-issues) captures open GitHub issues, plans and implements eligible work, and sets aside items needing your decision. Delivery defaults to local branches; you can explicitly enable PR creation, CI-gated merging, and verified issue closure.
 
 ## How it works
 
@@ -53,7 +56,7 @@ You define the responsibility and acceptance commands once. DutyLoop manages the
 | **Persistent control** | SQLite state, audit events, background execution, explicit stop, and acknowledged recovery. |
 | **Bounded execution** | Invocation and elapsed-time limits, with room reserved for implementation and its mandatory review. |
 
-Publication stays with you: the mission runtime does not push, open PRs, merge, or deploy. Inspect its branch and adopt changes through your normal workflow.
+Standing missions produce local branches without pushing, opening PRs, merging, or deploying. Issue mode also defaults to local output and offers separately configured GitHub delivery.
 
 ## Quick start
 
@@ -130,6 +133,25 @@ dutyloop stop --state ../mission-state
 
 Status shows the mission branch, accepted commit, call usage, and task outcomes. Stopping is asynchronous; check status again to confirm completion. A latched stop cannot be cleared by restarting. [Operations and troubleshooting](docs/operations.md) cover blockers, limits, and interrupted work.
 
+## Process GitHub issues
+
+Use an existing codebase, authenticated coding CLI, and authenticated GitHub CLI (`gh`). Copy [the issue configuration](examples/issues.json) outside the target repository, set the project, repository, allowed paths, and checks, and keep `github.delivery` set to `local` for local results:
+
+```console
+dutyloop issues init --spec issues.json --state ../issue-state
+dutyloop issues run --state ../issue-state --plan-only
+dutyloop issues status --state ../issue-state --human
+dutyloop issues run --state ../issue-state
+```
+
+Initialization captures the current open issues and their comments without model calls or GitHub writes. Planning consumes the batch's call budget. Execution respects issue dependencies, applies the same verification and review gates as missions, and leaves `needs_decision` items for you while continuing eligible work. `queue.batch_size` bounds each run; the total call and time limits persist across runs.
+
+Set `github.delivery` to `pull_request` to publish PRs, or `merge` with explicit `required_checks` to wait for CI and merge. With `close_issues: true`, merge mode checks the merged tree and reruns your checks before closing an unchanged issue. Running or starting a batch authorizes its configured delivery operations. Uncertain effects require inspection, and a completed pass can still contain unresolved issues.
+
+Automatic merge also requires readable, existing branch protection that enforces up-to-date required checks for administrators. DutyLoop does not change that policy; local and PR modes work without it.
+
+See [the issue workflow guide](docs/issues.md) for configuration, background execution, decisions, recovery, and delivery boundaries. Coverage is currently offline; an authenticated real-project issue batch has not been verified.
+
 ## Where it fits
 
 | Responsibility | Useful inputs | Deliverable |
@@ -163,13 +185,15 @@ python -m pip install -e ".[mcp]"
 dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 ```
 
-Tools: `mission_create`, `mission_start`, `mission_status`, `mission_events`, and `mission_stop`. Creation does not start work. Configure your client and project allowlist as described in [MCP setup](docs/mcp.md). MCP compatibility alone does not provide a native execution adapter for another host.
+Tools: `mission_create`, `mission_start`, `mission_status`, `mission_events`, and `mission_stop`. Creation does not start work. Configure your client and project allowlist as described in [MCP setup](docs/mcp.md). The MCP interface controls standing missions; use the CLI for issue batches. MCP compatibility alone does not provide a native execution adapter for another host.
 
 </details>
 
 ## Project status
 
 **Alpha, with explicit operating boundaries.** Offline behavior tests, a scripted end-to-end demo, and the recorded host checks cover specific control contracts. Long-term usefulness and reduced maintainer effort still need real-project evaluation; comparative effectiveness has not been established.
+
+The issue workflow has offline queue and delivery coverage, without an authenticated real-project batch. Claude Code phases use fresh processes and available committed project instructions; resuming an existing conversation and loading installation-specific automatic memory have not been verified.
 
 - **Limits:** invocations count outer driver calls, not each host request or
   subagent. Wall time includes waiting and downtime after the first run.
@@ -187,6 +211,7 @@ Keep mission state and transcripts private. Read [limits and host support](docs/
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Prepare a project, run a mission, and inspect its branch |
 | [Configuration](docs/configuration.md) | Set paths, checks, constraints, drivers, and limits |
+| [GitHub issues](docs/issues.md) | Plan a backlog, handle decisions, and configure PR/merge delivery |
 | [Examples](examples/README.md) | Adapt a maintenance or documentation mission |
 | [Operations](docs/operations.md) | Monitor events, stop work, and handle recovery |
 | [Adapter protocol](docs/adapter-protocol.md) | Build a host wrapper or understand native contracts |

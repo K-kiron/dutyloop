@@ -72,14 +72,17 @@ class _NoDispatch(Exception):
 
 
 class Supervisor:
-    def __init__(self, store, driver, interrupted):
+    def __init__(self, store, driver, interrupted, *, should_stop=None):
         self.store = store
         self.spec = store.snapshot()["spec"]
         self.driver = driver
         self.interrupted = interrupted
+        self.external_stop = should_stop
         self.monotonic_deadline = time.monotonic() + max(0, store.snapshot()["deadline"] - time.time())
 
     def stopped(self):
+        if self.external_stop is not None and self.external_stop():
+            self.interrupted.set()
         return self.interrupted.is_set() or self.store.control()["stop_requested"] or time.monotonic() >= self.monotonic_deadline
 
     def remaining(self):
@@ -361,6 +364,60 @@ class Supervisor:
         self.store.failure("repeated_task_failures")
         self.store.event("task_rejected", {"task_id": task_id, "feedback": feedback})
 
+    def selected(self, proposal):
+        """Run one operator-selected task, retaining all normal acceptance gates."""
+        try:
+            if self.stopped():
+                raise _NoDispatch()
+            if not self.store.require_calls(2):
+                return
+            snapshot = self.store.snapshot()
+            observation = make_worktree(Path(self.spec["project"]),
+                                        self.store.directory / "observations" / uuid.uuid4().hex,
+                                        snapshot["accepted_head"])
+            git_file = (observation / ".git").read_bytes()
+            assert_identity(observation, snapshot["accepted_head"], git_file)
+            if git(observation, "status", "--porcelain"):
+                self.store.set_status("blocked", "selected_task_observation_modified")
+                raise RuntimeError("Selected-task evidence worktree differs from its accepted base")
+            try:
+                candidate = self.candidate(proposal, observation)
+            except ValueError as exc:
+                self.store.event("candidate_rejected", {"key": proposal["key"], "reason": str(exc)})
+                self.store.set_status("blocked", "invalid_selected_task")
+                return
+            finally:
+                self.release_observation(observation)
+            if self.stopped() or self.store.control()["status"] == "blocked":
+                raise _NoDispatch()
+            self.store.event("task_selected", {"key": candidate["key"]})
+            self.execute(candidate)
+        except _NoDispatch:
+            pass
+        except Exception as exc:
+            self.store.event("selected_task_error", {"error": str(exc)})
+            if isinstance(exc, GitCleanupError):
+                self.store.set_status("blocked", "git_cleanup_unconfirmed")
+            elif not self.stopped() and self.store.control()["status"] != "blocked":
+                self.store.set_status("blocked", "selected_task_failed")
+        finally:
+            self.finish_selected()
+
+    def finish_selected(self):
+        snapshot = self.store.snapshot()
+        if snapshot["stop_requested"] or self.interrupted.is_set():
+            self.store.stop()
+            self.store.set_status("stopped", "operator_stop", runner_pid=None)
+        elif snapshot["status"] in {"blocked", "limited"}:
+            self.store.set_status(snapshot["status"], snapshot["reason"], runner_pid=None)
+        elif self.remaining() <= 0:
+            self.store.set_status("limited", "wall_time_limit", runner_pid=None)
+        elif len(snapshot["tasks"]) == 1 and snapshot["tasks"][0]["state"] in {"accepted", "rejected"}:
+            self.store.set_status("completed", "selected_task_" + snapshot["tasks"][0]["state"], runner_pid=None)
+        else:
+            reason = "selected_task_unknown" if snapshot["tasks"] else "selected_task_not_executed"
+            self.store.set_status("blocked", reason, runner_pid=None)
+
     def loop(self):
         while not self.stopped():
             snapshot = self.store.snapshot()
@@ -400,11 +457,32 @@ class Supervisor:
 
 
 def run(state_dir: Path, *, driver=None) -> dict:
+    return _run(state_dir, driver=driver)
+
+
+def run_task(state_dir: Path, candidate: dict, *, driver=None, should_stop=None) -> dict:
+    """Execute exactly one selected candidate without autonomous discovery.
+
+    Each finite mission owns at most one task. Accepted, rejected and unknown
+    tasks are never replayed, including after explicit interruption recovery.
+    The stop callback lets a parent queue stop a child through the same process
+    cleanup and integration gates as a normal operator stop.
+    """
+    validate_payload(candidate, DISCOVERY_SCHEMA["properties"]["candidates"]["items"])
+    return _run(state_dir, driver=driver, selected_task=candidate, should_stop=should_stop)
+
+
+def _run(state_dir, *, driver=None, selected_task=None, should_stop=None):
     store = Store(state_dir)
     interrupted = threading.Event()
     with runner_lock(store.directory):
         snapshot = store.snapshot()
-        if snapshot["status"] in {"limited", "stopped", "blocked"} or snapshot["stop_requested"]:
+        if selected_task is not None and snapshot["tasks"]:
+            saved = snapshot["tasks"][0]["candidate"]
+            original = {key: value for key, value in saved.items() if key != "source_receipts"}
+            if len(snapshot["tasks"]) != 1 or original != selected_task:
+                raise ValueError("This mission already contains a different selected task")
+        if snapshot["status"] in {"completed", "limited", "stopped", "blocked"} or snapshot["stop_requested"]:
             return snapshot
         if store.has_unfinished_work():
             store.set_status("blocked", "unclean_interruption")
@@ -412,6 +490,13 @@ def run(state_dir: Path, *, driver=None) -> dict:
         if git(Path(snapshot["project"]), "rev-parse", snapshot["branch"]) != snapshot["accepted_head"]:
             store.set_status("blocked", "integration_ref_changed")
             raise RuntimeError("Integration branch was changed outside the supervisor")
+        if selected_task is not None and snapshot["tasks"]:
+            state = snapshot["tasks"][0]["state"]
+            if state in {"accepted", "rejected"}:
+                store.set_status("completed", "selected_task_" + state, runner_pid=None)
+            else:
+                store.set_status("blocked", "selected_task_unknown", runner_pid=None)
+            return store.snapshot()
         if not store.begin():
             return store.snapshot()
         driver = driver if driver is not None else get_driver(snapshot["driver"])
@@ -420,9 +505,12 @@ def run(state_dir: Path, *, driver=None) -> dict:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 previous_handlers[sig] = signal.signal(sig, lambda *_: interrupted.set())
         try:
-            supervisor = Supervisor(store, driver, interrupted)
+            supervisor = Supervisor(store, driver, interrupted, should_stop=should_stop)
             with controlled_git(supervisor.stopped, supervisor.remaining, store.directory / "git-operations"):
-                supervisor.loop()
+                if selected_task is None:
+                    supervisor.loop()
+                else:
+                    supervisor.selected(selected_task)
         except BaseException:
             store.set_status("blocked", "supervisor_interrupted", runner_pid=None)
             raise

@@ -24,7 +24,9 @@ def mission(tmp_path):
         subprocess.run(["git", "-C", str(project), *args], check=True, capture_output=True)
     spec = {"mission": "Correct the app value while preserving all other behavior", "project": str(project),
             "allowed_paths": ["app.py"], "verification": [[sys.executable, "-B", "-c", "import app; assert app.value == 1"]],
-            "limits": {"max_invocations": 3, "max_wall_seconds": 30}, "poll_seconds": .05,
+            # These cases test acceptance, not machine-specific Git startup speed.
+            # The deadline test below installs its own short wall-time limit.
+            "limits": {"max_invocations": 3, "max_wall_seconds": 120}, "poll_seconds": .05,
             "max_task_attempts": 1}
     state = tmp_path / "state"
     initialize(spec, state)
