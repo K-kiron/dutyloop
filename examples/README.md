@@ -9,6 +9,8 @@ results on your project.
 | [mission.json](mission.json) | Bounded public-API reliability and usability maintenance. | Project path, scope, and unittest verification command. |
 | [documentation-mission.json](documentation-mission.json) | Correct documentation/examples without changing product behavior. | Project path and the operator-owned documentation checker. |
 | [issues.json](issues.json) | Plan and implement a captured GitHub issue backlog with Claude Code; delivery defaults to local. | Project, repository, scope, checks, and optional delivery policy. |
+| [desktop-issues.json](desktop-issues.json) | Process a captured issue backlog using the current local desktop coding conversation through MCP. | Project, repository, scope, and operator checks. |
+| [desktop-mission.json](desktop-mission.json) | Run a standing mission through desktop phase handoffs. | Project, scope, and operator checks. |
 
 The documentation checker in the second example is a placeholder; DutyLoop
 does not supply a universal documentation oracle. Choose checks that test your
@@ -29,3 +31,6 @@ field meanings and [operations](../docs/operations.md) for inspecting outputs.
 Issue batches use `dutyloop issues init` and `dutyloop issues run` instead of the
 standing mission commands above. See [the issue workflow](../docs/issues.md) for
 planning, decisions, persistent budgets, and opt-in GitHub delivery.
+
+Desktop examples use the current MCP host to perform phases; starting a runner
+does not wake an idle conversation. See [desktop setup](../docs/desktop.md).

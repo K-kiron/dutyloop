@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "mission": "Maintain the reliability of the documented public API. Inspect current source, tests, documentation, and committed feedback. Fix reproducible user-facing failures with regression coverage, one focused change at a time. Wait when there is no supported work; report a blocker when a product decision is required.",
+  "project": "/absolute/path/to/your/repository",
+  "allowed_paths": ["src", "tests", "docs"],
+  "verification": [
+    ["python", "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
+  ],
+  "constraints": [
+    "Preserve documented public behavior outside the evidenced failure.",
+    "Do not change credentials, dependencies, CI, security policy, or deployment configuration.",
+    "Let DutyLoop verify and create commits."
+  ],
+  "kinds": ["bugfix", "qa", "docs"],
+  "driver": {"name": "desktop"},
+  "team": {"discovery_workers": 1},
+  "limits": {"max_invocations": 12, "max_wall_seconds": 1800},
+  "max_task_attempts": 2,
+  "call_timeout_seconds": 600,
+  "poll_seconds": 30
+}

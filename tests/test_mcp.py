@@ -10,6 +10,12 @@ import pytest
 
 from dutyloop import mcp_server
 
+EXPECTED_TOOLS = {
+    "mission_create", "mission_start", "mission_status", "mission_stop", "mission_events", "mission_recover",
+    "issues_create", "issues_start", "issues_status", "issues_stop", "issues_events", "issues_recover", "issues_resolve",
+    "desktop_next", "desktop_submit", "desktop_cancel",
+}
+
 
 @pytest.fixture
 def control(tmp_path, monkeypatch):
@@ -177,9 +183,7 @@ def test_official_sdk_registers_tools_without_starting_mission(control):
     controller, project, calls = control
     server = mcp_server.create_server(controller.root, [project])
     tools = asyncio.run(server.list_tools())
-    assert {tool.name for tool in tools} == {
-        "mission_create", "mission_start", "mission_status", "mission_stop", "mission_events"
-    }
+    assert {tool.name for tool in tools} == EXPECTED_TOOLS
     create = next(tool for tool in tools if tool.name == "mission_create")
     assert "authorization" in create.description.lower()
     assert calls == []
@@ -206,9 +210,7 @@ def test_official_sdk_stdio_handshake_is_inert_and_returns_json_errors(tmp_path)
                 initialized = await session.initialize()
                 assert initialized.serverInfo.name == "DutyLoop"
                 tools = await session.list_tools()
-                assert {tool.name for tool in tools.tools} == {
-                    "mission_create", "mission_start", "mission_status", "mission_stop", "mission_events"
-                }
+                assert {tool.name for tool in tools.tools} == EXPECTED_TOOLS
                 result = await session.call_tool("mission_status", {"name": "../escape"})
                 return json.loads(result.content[0].text)
 

@@ -16,12 +16,19 @@
 | `recover --acknowledge` | Explicitly record interrupted work as unknown; never replay it or refund calls. |
 | `demo` | Run the offline scripted-driver demonstration. |
 | `mcp` | Serve optional local control tools over stdio. |
+| `desktop-config` | Print local Codex TOML or Claude MCP JSON; no host configuration writes or model work. |
 
 Use `dutyloop COMMAND --help` for exact options. Commands return JSON by default,
-except `status --human`, version/help output, and MCP protocol traffic. A returned
+except `status --human`, `desktop-config`, version/help output, and MCP protocol traffic. A returned
 snapshot may describe `blocked` or `limited` even when the CLI exits 0: a
 successful control operation is distinct from a successful mission. Invocation
 or validation errors exit 1; malformed command-line arguments exit 2.
+
+For `driver.name: desktop`, the supervisor waits for your current local coding
+conversation to claim and return phases. Stop/deadline handling cannot terminate
+desktop-owned shells or subagents. Finish or stop them before declaring
+`work_stopped: true`; inspect unknown claims and use explicit recovery rather
+than reassigning them. See [desktop operations](desktop.md#stop-and-recover).
 
 ## Progress and events
 

@@ -21,7 +21,7 @@ def branch_name(value):
     if (not isinstance(value, str) or not value or value.startswith("-")
             or re.match(r"(?i)(codex|claude|chatgpt|copilot)/", value)
             or subprocess.run(["git", "check-ref-format", "--branch", value],
-                              capture_output=True, timeout=10).returncode):
+                              stdin=subprocess.DEVNULL, capture_output=True, timeout=10).returncode):
         raise ValueError("Expected a functional Git branch name")
     return value
 

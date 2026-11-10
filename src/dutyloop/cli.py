@@ -30,12 +30,14 @@ def _reject_link(path: Path) -> None:
         raise ValueError(f"Symlinks and reparse points are not allowed: {path}")
 
 
-def start_background(state_dir: Path, *, issue_batch=False) -> dict:
+def start_background(state_dir: Path, *, issue_batch=False, plan_only=False) -> dict:
     """Launch a runner without waiting; the engine enforces exclusive ownership."""
     state_dir = Path(state_dir).expanduser().absolute()
     for path in (state_dir, *state_dir.parents):
         _reject_link(path)
     state_dir = state_dir.resolve()
+    if plan_only and not issue_batch:
+        raise ValueError("plan_only requires an issue batch")
     if issue_batch:
         from . import issues
         snapshot = issues.status(state_dir)
@@ -59,7 +61,8 @@ def start_background(state_dir: Path, *, issue_batch=False) -> dict:
         options["start_new_session"] = True
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         process = subprocess.Popen(
-            [sys.executable, "-m", "dutyloop", *(["issues"] if issue_batch else []), "run", "--state", str(state_dir)],
+            [sys.executable, "-m", "dutyloop", *(["issues"] if issue_batch else []), "run", "--state", str(state_dir),
+             *(["--plan-only"] if plan_only else [])],
             stdout=stdout,
             stderr=stderr,
             **options,
@@ -93,7 +96,7 @@ def _parser() -> argparse.ArgumentParser:
         item.add_argument("--state", type=Path, required=True)
         if name == "init":
             item.add_argument("--spec", type=Path, required=True)
-        if name == "run":
+        if name in {"run", "start"}:
             item.add_argument("--plan-only", action="store_true")
         if name == "status":
             item.add_argument("--human", action="store_true")
@@ -111,7 +114,7 @@ def _parser() -> argparse.ArgumentParser:
     configure.add_argument("--mission", required=True)
     configure.add_argument("--allow-path", action="append", required=True)
     configure.add_argument("--verify-json", action="append", required=True, help="Verification argv encoded as one JSON array; repeat for more checks")
-    configure.add_argument("--driver", choices=NATIVE_DRIVERS, default="codex")
+    configure.add_argument("--driver", choices=(*NATIVE_DRIVERS, "desktop"), default="codex")
     configure.add_argument("--model")
     configure.add_argument("--max-invocations", type=int, default=12)
     configure.add_argument("--max-wall-seconds", type=float, default=1800)
@@ -147,6 +150,10 @@ def _parser() -> argparse.ArgumentParser:
     mcp = commands.add_parser("mcp", help="Serve the optional MCP control interface over stdio")
     mcp.add_argument("--root", type=Path, required=True)
     mcp.add_argument("--allow-project", type=Path, action="append", required=True)
+    desktop = commands.add_parser("desktop-config", help="Print local desktop MCP configuration without changing host settings")
+    desktop.add_argument("--client", choices=("codex", "claude"), required=True)
+    desktop.add_argument("--root", type=Path, required=True)
+    desktop.add_argument("--allow-project", type=Path, action="append", required=True)
     return parser
 
 
@@ -161,7 +168,10 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
         if action == "run":
             return issues.run(arguments.state, plan_only=arguments.plan_only)
         if action == "start":
-            return start_background(arguments.state, issue_batch=True)
+            options = {"issue_batch": True}
+            if arguments.plan_only:
+                options["plan_only"] = True
+            return start_background(arguments.state, **options)
         if action == "status":
             snapshot = issues.status(arguments.state)
             if not arguments.human:
@@ -218,6 +228,9 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
     if command == "mcp":
         _serve_mcp(arguments.root, arguments.allow_project)
         return None
+    if command == "desktop-config":
+        from .mcp_server import desktop_configuration
+        return desktop_configuration(arguments.client, arguments.root, arguments.allow_project)
     raise ValueError(f"Unknown command: {command}")
 
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add a desktop driver that hands phases to the current local coding conversation
+  through MCP, without launching a separate model CLI or selecting its model.
+  Keep acceptance checks and delivery in the existing supervisor.
+- Add durable claims, schema-checked idempotent results, fresh-context review
+  declarations, and explicit quarantine/recovery for uncertain desktop work.
+  Desktop cancellation and usage are cooperative, not process containment or
+  model-call accounting.
+- Expose issue workflows over MCP, including planning-only startup, and print
+  local desktop connection settings without editing host configuration. Isolate
+  noninteractive Git stdin from the MCP protocol stream.
 - Add a finite GitHub issue workflow with backlog/comment snapshots, read-only
   planning, dependency-aware batches, per-issue branches, decision handling,
   persistent shared budgets, and explicit interruption recovery.
@@ -10,7 +20,7 @@
   Default issue delivery stays local; coverage uses offline fixtures, without an
   authenticated real-project batch.
 - Add `dutyloop issues` CLI controls, a Claude Code configuration example, and
-  an issue workflow guide. Existing MCP tools continue to control missions only.
+  an issue workflow guide.
 - Stage and materialize task files before verification, including Git filter
   conversions. Block verification commands that change tracked content or the
   staged tree, and record the verified tree in events and accepted tasks.

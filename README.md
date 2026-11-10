@@ -21,6 +21,7 @@
 <p align="center">
   <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
   <a href="#quick-start">Quick start</a> ·
+  <a href="#use-your-current-desktop-agent">Desktop agent</a> ·
   <a href="#run-a-project-mission">Run a mission</a> ·
   <a href="#process-github-issues">Process issues</a> ·
   <a href="docs/getting-started.md">Documentation</a> ·
@@ -45,7 +46,7 @@ Already have a backlog? [Issue mode](#process-github-issues) captures open GitHu
   <img src="docs/assets/workflow-light.svg" alt="Discover evidenced work, implement in a worktree, run operator checks, request a separate review, then commit accepted work and discover again" width="1200">
 </picture>
 
-You define the responsibility and acceptance commands once. DutyLoop manages the worktrees, call reservations, staged-snapshot checks, review invocation, and durable state around your existing coding CLI.
+You define the responsibility and acceptance commands once. DutyLoop manages the worktrees, phase reservations, staged-snapshot checks, review, and durable state. Use your current local desktop coding agent through MCP, or select a native coding CLI adapter.
 
 | Capability | What it gives you |
 | --- | --- |
@@ -84,6 +85,19 @@ The returned JSON includes:
 
 This is an excerpt of the demo result. Full output also contains the mission snapshot and artifact locations. See the [verification record](docs/validation.md) for the distinction between offline checks and authenticated host runs.
 
+## Use your current desktop agent
+
+Choose `driver: {"name": "desktop"}` to let the current local Codex or Claude Code desktop conversation do the work. DutyLoop supplies phase prompts through MCP and retains verification, commits, and configured issue delivery. It does not select a model or start another model CLI login.
+
+```console
+python -m pip install -e ".[mcp]"
+python -m dutyloop desktop-config --client codex --root /absolute/path/to/dutyloop-states --allow-project /absolute/path/to/project
+```
+
+Use `--client claude` for Claude's JSON configuration. The command prints configuration; merge it into your host's local MCP settings. It does not write host settings or start work. Copy [the desktop issue spec](examples/desktop-issues.json) or [mission spec](examples/desktop-mission.json) outside the target repository, replace its paths and checks, then follow the [desktop handoff guide](docs/desktop.md) and its ready-to-paste host prompt.
+
+The host claims each phase, executes it in DutyLoop's exact managed checkout, and submits schema-checked results. Review needs a fresh subagent or context. DutyLoop cannot stop desktop-owned shells or subagents; finish or stop them before submitting or cancelling. Actual Codex/Claude desktop execution has not yet been verified. Connecting MCP alone does not wake an idle conversation.
+
 ## Run a project mission
 
 A useful mission names a responsibility and the behavior to preserve:
@@ -92,7 +106,7 @@ A useful mission names a responsibility and the behavior to preserve:
 > documented behavior with regression coverage. Preserve the public API and
 > file format. Wait when there is no evidenced work.
 
-Install and authenticate a [supported coding CLI](#host-adapters) using its own setup. Choose a repository with a committed `HEAD` and checks that work from a fresh worktree. Save this as `mission.json` **outside the target repository**:
+For native CLI execution, install and authenticate a [supported coding CLI](#host-adapters) using its own setup. Choose a repository with a committed `HEAD` and checks that work from a fresh worktree. Save this as `mission.json` **outside the target repository**:
 
 ```json
 {
@@ -135,7 +149,7 @@ Status shows the mission branch, accepted commit, call usage, and task outcomes.
 
 ## Process GitHub issues
 
-Use an existing codebase, authenticated coding CLI, and authenticated GitHub CLI (`gh`). Copy [the issue configuration](examples/issues.json) outside the target repository, set the project, repository, allowed paths, and checks, and keep `github.delivery` set to `local` for local results:
+Use an existing codebase and authenticated GitHub CLI (`gh`). The [desktop route](docs/desktop.md) uses your current coding conversation through MCP. For native CLI execution, authenticate your coding CLI, copy [the issue configuration](examples/issues.json) outside the target repository, set the project, repository, allowed paths, and checks, and keep `github.delivery` set to `local` for local results:
 
 ```console
 dutyloop issues init --spec issues.json --state ../issue-state
@@ -168,6 +182,7 @@ DutyLoop uses existing host installations and authentication. Choose the adapter
 
 | Integration | Adapter | Verification coverage |
 | --- | --- | --- |
+| **Current local desktop agent** | MCP phase handoff with `driver.name: desktop` | Offline contract checks; actual Codex/Claude desktop execution unverified |
 | **Codex CLI** | Native structured output | Offline protocols + one historical authenticated fixture mission |
 | **Claude Code CLI** | Native structured output | Offline protocols |
 | **OpenCode 2.2.5** | Native, version-pinned JSON events | Pinned-source inspection + offline protocols |
@@ -185,7 +200,7 @@ python -m pip install -e ".[mcp]"
 dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 ```
 
-Tools: `mission_create`, `mission_start`, `mission_status`, `mission_events`, and `mission_stop`. Creation does not start work. Configure your client and project allowlist as described in [MCP setup](docs/mcp.md). The MCP interface controls standing missions; use the CLI for issue batches. MCP compatibility alone does not provide a native execution adapter for another host.
+Tools cover mission and issue creation, start, status, events, stop, and explicit recovery; issue decisions use `issues_resolve`. Desktop workers claim and return phases with `desktop_next`, `desktop_submit`, and `desktop_cancel`. Creation does not start work. Configure your client and project allowlist as described in [MCP setup](docs/mcp.md); use the [desktop guide](docs/desktop.md) for your current conversation. MCP connectivity alone does not certify host execution.
 
 </details>
 
@@ -193,10 +208,11 @@ Tools: `mission_create`, `mission_start`, `mission_status`, `mission_events`, an
 
 **Alpha, with explicit operating boundaries.** Offline behavior tests, a scripted end-to-end demo, and the recorded host checks cover specific control contracts. Long-term usefulness and reduced maintainer effort still need real-project evaluation; comparative effectiveness has not been established.
 
-The issue workflow has offline queue and delivery coverage, without an authenticated real-project batch. Claude Code phases use fresh processes and available committed project instructions; resuming an existing conversation and loading installation-specific automatic memory have not been verified.
+The issue workflow has offline queue and delivery coverage, without an authenticated real-project batch. Native Claude Code phases use fresh processes and available committed project instructions. The desktop driver passes phases to an existing conversation; actual desktop execution, review isolation, and installation-specific memory behavior remain unverified.
 
 - **Limits:** invocations count outer driver calls, not each host request or
-  subagent. Wall time includes waiting and downtime after the first run.
+  subagent. Desktop invocations count phase handoffs; desktop model usage remains
+  unknown. Wall time includes waiting and downtime after the first run.
 - **Cost:** USD hard caps are unsupported. Unknown usage or cost stays unknown.
 - **Permissions:** allowed paths constrain acceptance. Worktrees share the
   host's filesystem, network, credentials, and Git access; they are not a sandbox.
@@ -210,6 +226,7 @@ Keep mission state and transcripts private. Read [limits and host support](docs/
 | Guide | Start here when you want to… |
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Prepare a project, run a mission, and inspect its branch |
+| [Desktop agent](docs/desktop.md) | Use your current local coding conversation through MCP |
 | [Configuration](docs/configuration.md) | Set paths, checks, constraints, drivers, and limits |
 | [GitHub issues](docs/issues.md) | Plan a backlog, handle decisions, and configure PR/merge delivery |
 | [Examples](examples/README.md) | Adapt a maintenance or documentation mission |

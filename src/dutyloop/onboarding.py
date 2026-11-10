@@ -34,7 +34,7 @@ def validation_report(spec: dict, state_dir: Path) -> dict:
     result = subprocess.run(
         ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
          "-C", str(project), "status", "--porcelain"],
-        capture_output=True, text=True, timeout=10, check=True,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10, check=True,
     )
     if result.stdout.strip():
         warnings.append("The checkout has uncommitted changes. Mission input is committed HEAD; commit intended input first.")
@@ -44,6 +44,8 @@ def validation_report(spec: dict, state_dir: Path) -> dict:
             warnings.append(f"Verification executable was not found: {program}")
     if normalized["driver"]["name"] == "command":
         warnings.append("The custom wrapper runs with your local authority; its permission and host protocol behavior are your responsibility.")
+    if normalized["driver"]["name"] == "desktop":
+        warnings.append("Desktop work requires an active MCP host. Stop cannot terminate host-owned tools; model usage remains unknown.")
     if (plain_path(state_dir) / "mission.sqlite3").exists():
         warnings.append("The state directory already contains a mission; init will not overwrite it.")
     return {"valid": True, "spec": normalized, "warnings": warnings}
@@ -65,7 +67,7 @@ def write_configuration(*, project: Path, output: Path, mission: str,
     spec = {
         "version": 1, "mission": mission, "project": str(project),
         "allowed_paths": allowed_paths, "verification": commands,
-        "driver": {"name": driver, "model": model},
+        "driver": {"name": driver} if driver == "desktop" and model is None else {"name": driver, "model": model},
         "limits": {"max_invocations": max_invocations, "max_wall_seconds": max_wall_seconds},
     }
     report = validation_report(spec, project.parent / ".dutyloop-configuration-check")

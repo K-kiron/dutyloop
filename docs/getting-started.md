@@ -8,8 +8,9 @@ step. Start with a narrow product area and verification you already trust.
 
 - Python 3.11 or newer and Git on `PATH`.
 - A repository with at least one commit and a configured Git author identity.
-- For a real mission, an installed coding CLI with its own working authentication
-  and model access. [Check the support matrix](limits-and-hosts.md).
+- For native execution, an installed coding CLI with working authentication and
+  model access. Your [current local desktop agent](desktop.md) can instead
+  perform phases through MCP without another model CLI login.
 - Dependencies and checks that work in a fresh worktree. DutyLoop does not copy
   a local virtual environment, ignored files, or uncommitted changes into it.
 
@@ -29,6 +30,10 @@ dutyloop --version
 
 Use `dutyloop demo --directory ../dutyloop-demo` for the offline scripted
 demonstration before connecting a model. Its driver is explicitly simulated.
+
+This page continues with native CLI execution. For desktop handoffs, install
+the MCP extra with `python -m pip install -e ".[mcp]"`, then follow
+[desktop setup](desktop.md) and use its example spec and host prompt.
 
 ## 1. Define the responsibility and authority
 

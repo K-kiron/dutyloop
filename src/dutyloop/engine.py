@@ -62,6 +62,9 @@ def recover(state_dir: Path, *, acknowledge: bool = False) -> dict:
         branch_head = git(Path(snapshot["project"]), "rev-parse", snapshot["branch"])
         if branch_head != snapshot["accepted_head"]:
             raise RuntimeError("Integration branch differs from recorded head; inspect it and start a new mission from the selected commit")
+        if snapshot["driver"]["name"] == "desktop":
+            from .desktop import DesktopQueue
+            DesktopQueue(store.directory).invalidate()
         store.recover_unknown()
         store.event("recovery_acknowledged", {"unknown_work_replayed": False})
     return store.snapshot()
@@ -106,6 +109,7 @@ class Supervisor:
                                            "cost_usd": result.cost_usd, "session_id": result.session_id,
                                            "error": result.error, "error_kind": getattr(result, "error_kind", None), "cancelled": result.cancelled,
                                            "timed_out": result.timed_out, "cleanup_confirmed": result.cleanup_confirmed,
+                                           "cleanup_scope": result.cleanup_scope,
                                            "output_dir": str(output_dir)})
             if not result.cleanup_confirmed:
                 self.store.set_status("blocked", "worker_cleanup_unconfirmed")
@@ -499,7 +503,7 @@ def _run(state_dir, *, driver=None, selected_task=None, should_stop=None):
             return store.snapshot()
         if not store.begin():
             return store.snapshot()
-        driver = driver if driver is not None else get_driver(snapshot["driver"])
+        driver = driver if driver is not None else get_driver(snapshot["driver"], state_dir=store.directory)
         previous_handlers = {}
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGINT, signal.SIGTERM):

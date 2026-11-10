@@ -51,7 +51,9 @@ def git(project: Path, *args: str) -> str:
             raise RuntimeError("Git log cleanup escaped its owned directory")
         shutil.rmtree(operation_dir)
         return result.stdout.strip()
-    result = subprocess.run(argv, capture_output=True, timeout=60)
+    # A local MCP server owns stdin for its protocol. Noninteractive Git must
+    # never inherit that pipe (including Windows handle inheritance).
+    result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
     if result.returncode:
         raise RuntimeError(result.stderr.decode("utf-8", "replace").strip() or "Git command failed")
     return result.stdout.decode("utf-8", "replace").strip()

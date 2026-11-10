@@ -5,6 +5,36 @@ control-flow behavior, not long-term autonomous effectiveness or customer value.
 Raw mission state, account metadata, and host transcripts are kept private and
 are not included in this repository.
 
+## Desktop integration evidence boundary
+
+On 2026-11-10, an offline fixture used the official MCP SDK over real stdio to
+create a desktop mission, start its separate coordinator, claim a discovery
+phase, submit a schema-checked result, and reach the invocation limit. The
+original checkout stayed unchanged. Separate issue fixtures accepted a verified
+fix and rejected one that failed operator checks. Source/wheel builds and a
+fresh installed-wheel smoke check also passed, including desktop imports and
+CLI discovery. These fixtures used simulated host results, not paid model calls.
+
+The desktop driver has a local MCP phase contract and example configuration for
+an existing coding conversation. Official
+[OpenAI MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+and [Claude Code Desktop documentation](https://code.claude.com/docs/en/desktop#mcp-servers-from-the-claude-desktop-chat-app)
+establish host configuration mechanisms. They do not establish that DutyLoop
+has run successfully in those applications.
+
+No actual Codex or Claude desktop end-to-end phase execution, interruption,
+review isolation, or unattended run is recorded for this integration. Offline
+mailbox/schema tests and generated configuration can establish only their local
+contracts; they cannot verify app installation, account access, permissions,
+host memory, or model behavior. Native CLI evidence below remains separately
+scoped and does not validate the desktop route.
+
+Desktop result cleanup relies on a host declaration that all work has stopped;
+it is not managed-process termination evidence. Different context identifiers
+are not proof that a reviewer has an independent context. Model usage and cost
+from the current desktop conversation remain unknown. The
+[desktop guide](desktop.md) documents setup, handoff, stop, and recovery.
+
 ## Issue workflow evidence on 2026-11-10
 
 The issue tests use real temporary Git repositories, local bare remotes, and

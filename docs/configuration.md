@@ -62,9 +62,9 @@ because a URL was returned.
 
 | Field | Default | Rules |
 | --- | --- | --- |
-| `driver.name` | `"codex"` | A supported native adapter name, or `"command"` for a custom wrapper. See the [support matrix](limits-and-hosts.md). |
-| `driver.model` | Not specified | Optional nonempty model identifier, passed per invocation when the selected adapter supports it. It does not alter global host configuration. |
-| `driver.argv` | Not specified | Required nonempty argv array for `"command"`; forbidden for native adapters. |
+| `driver.name` | `"codex"` | A supported native adapter, `"desktop"` for your current local coding conversation, or `"command"` for a custom wrapper. See the [support matrix](limits-and-hosts.md). |
+| `driver.model` | Not specified | Optional nonempty model identifier when the selected native adapter supports it. Forbidden for desktop, which uses the current host's model. No global host configuration is changed. |
+| `driver.argv` | Not specified | Required nonempty argv array for `"command"`; forbidden for other drivers. |
 | `team.discovery_workers` | `1` | Integer from 1 to 3. Discovery may run in parallel; implementation and acceptance stay serial. |
 
 Native names are `codex`, `claude`, `opencode`, and `dsh`. OpenCode is pinned to
@@ -73,6 +73,13 @@ DSH uses its existing headless profile and rejects a nonempty `driver.model`.
 These pinned adapters have source/offline protocol coverage, not a recorded
 authenticated mission. [Adapter details](adapter-protocol.md) explain the contract.
 
+Desktop configuration is exactly `{"name": "desktop"}` with no other fields.
+Use `configure --driver desktop` for a starter mission spec, or copy a
+[desktop example](desktop.md). It does not select a model or launch another
+model CLI. The host must claim and perform each phase through local MCP; running
+the supervisor alone leaves it waiting for the host. Desktop phase handoffs
+consume invocation reservations; model usage and cost remain unknown.
+
 Use one discovery worker initially. Each worker consumes an invocation, including
 when it returns no useful candidate. A larger discovery team is not an
 implementation team, and no effectiveness gain has been established at equal
@@ -80,7 +87,10 @@ budget. A host may create subagents internally; the outer invocation budget does
 not separately count those activities.
 
 Custom command drivers are available through CLI mission initialization. MCP
-mission creation/start accepts native adapters only. See [the wrapper protocol](adapter-protocol.md).
+creation/start accepts native adapters and desktop, excluding custom commands.
+MCP mission creation defaults to Codex; MCP issue creation defaults to desktop.
+Set `driver` explicitly in reusable specs. See [MCP control](mcp.md) and
+[the wrapper protocol](adapter-protocol.md).
 
 ## Retry and timing controls
 
@@ -95,7 +105,9 @@ Each operator verification command is also bounded by `call_timeout_seconds`
 and the remaining mission wall time. Unknown, authentication, quota,
 configuration, and protocol failures block promptly rather than asking an
 implementer to repair host access. Explicit transient errors and clean deadlines
-can use the bounded retry policy.
+can use the bounded retry policy for managed calls. An expired claimed desktop
+request has unknown external cleanup and requires inspection and explicit
+recovery; it is not automatically reassigned.
 
 Budget exhaustion can interrupt a task before implementation, checking, or review
 finishes. DutyLoop leaves room for an implementation and its review before
