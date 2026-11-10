@@ -101,7 +101,9 @@ def recover(state_dir, *, acknowledge=False, github=None):
                         store.update_issue(row["number"], "closed" if verified_close else "merged",
                                            pr_number=pr["number"], merge_sha=pr["merge_commit_sha"])
                     else:
-                        store.update_issue(row["number"], "pull_request", pr_number=pr["number"])
+                        store.update_issue(row["number"], "pull_request", pr_number=pr["number"],
+                                           pr_url=pr["html_url"], pr_title=pr["title"], pr_body=pr["body"] or "",
+                                           published_head=pr["head"]["sha"])
                 else:
                     # The operator must inspect a branch-only or uncertain publication.
                     store.update_issue(row["number"], "needs_decision", reason="publication_requires_inspection")

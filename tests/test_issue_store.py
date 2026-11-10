@@ -82,14 +82,16 @@ def test_budget_reservations_are_atomic_and_unknown_calls_stay_charged(store):
         calls = list(pool.map(lambda _: store.reserve_call("plan", 3), range(10)))
     reserved = [call for call in calls if call is not None]
     assert len(reserved) == len(set(reserved)) == 4
-    store.finish_call(reserved[0], {"message": "lost response"}, unknown=True)
+    lost_call = max(reserved)
+    store.finish_call(lost_call, {"message": "lost response"}, unknown=True)
     snapshot = store.snapshot()
     assert snapshot["invocations"] == 4
     assert snapshot["status"] == "limited"
     assert snapshot["reason"] == "invocation_limit"
-    assert snapshot["calls"][0]["state"] == "unknown"
+    states = {call["id"]: call["state"] for call in snapshot["calls"]}
+    assert states == {call: "unknown" if call == lost_call else "running" for call in reserved}
     with pytest.raises(RuntimeError, match="settled"):
-        store.finish_call(reserved[0], {})
+        store.finish_call(lost_call, {})
 
 
 def test_begin_and_recovery_preserve_first_deadline_across_downtime(store):

@@ -72,6 +72,75 @@ def test_recovery_does_not_treat_external_closure_as_verified_acceptance(batch, 
     assert github.writes == [("create", 100), ("merge", 100)]
 
 
+def interrupted_publication(batch, monkeypatch):
+    """Lose the create response before the batch can save PR ownership metadata."""
+    _, state, spec, github = batch
+    spec["queue"] = {"numbers": [1]}
+    spec["github"].update(delivery="merge", close_issues=True, required_checks=["tests"])
+    create = github.create_pull_request
+
+    def lose_response(*args):
+        create(*args)
+        raise issues.GitHubError("lost create response", outcome_unknown=True)
+
+    monkeypatch.setattr(github, "create_pull_request", lose_response)
+    issues.initialize(spec, state, github=github)
+    with pytest.raises(issues.GitHubError, match="lost create response"):
+        issues.run(state, driver=workflow.Host(), github=github)
+    assert issues.status(state)["issues"][0]["state"] == "publishing"
+    return state, github
+
+
+def test_recovered_publication_can_repair_ci_on_the_same_owned_pr(batch, monkeypatch):
+    state, github = interrupted_publication(batch, monkeypatch)
+    interrupted = issues.status(state)
+    first_head = interrupted["issues"][0]["head"]
+    checks = github.checks
+    monkeypatch.setattr(github, "checks", lambda head: [
+        {"name": "tests", "status": "completed", "conclusion": "failure"}
+    ] if head == first_head else checks(head))
+    recovered = issues.recover(state, acknowledge=True, github=github)
+    assert recovered["issues"][0]["state"] == "pull_request"
+    assert recovered["deadline"] == interrupted["deadline"]
+    assert recovered["invocations"] == interrupted["invocations"]
+    assert github.writes == [("create", 100)]
+
+    result = issues.run(state, driver=workflow.Host(), github=github)
+    row = result["issues"][0]
+    assert row["state"] == "closed"
+    assert row["head"] != first_head
+    assert row["pr_number"] == 100
+    assert row["delivery_attempts"] == 2
+    assert [kind for kind, _ in github.writes] == ["create", "update", "merge", "close"]
+
+
+@pytest.mark.parametrize("changed", ["head", "head_repository", "base_repository", "base_branch", "title", "body"])
+def test_recovery_refuses_unowned_or_changed_pr_before_saving_metadata(batch, monkeypatch, changed):
+    state, github = interrupted_publication(batch, monkeypatch)
+    pr = github.prs[100]
+    if changed == "head":
+        row = issues.status(state)["issues"][0]
+        git(github.remote, "update-ref", f"refs/heads/{row['branch']}", row["base_sha"])
+    elif changed == "head_repository":
+        pr["head"]["repo"]["full_name"] = "another/project"
+    elif changed == "base_repository":
+        pr["base"]["repo"]["full_name"] = "another/project"
+    elif changed == "base_branch":
+        pr["base"]["ref"] = "another-base"
+        # A known PR number exercises destination validation rather than discovery.
+        IssueStore(state).update_issue(1, "publishing", pr_number=100)
+    else:
+        pr[changed] = "Changed outside the batch"
+    with pytest.raises(RuntimeError, match="differs from"):
+        issues.recover(state, acknowledge=True, github=github)
+    row = issues.status(state)["issues"][0]
+    assert row["state"] == "interrupted"
+    assert not row.get("published_head")
+    assert not row.get("pr_title")
+    assert not row.get("pr_body")
+    assert github.writes == [("create", 100)]
+
+
 @pytest.mark.parametrize("reason", ["batch_interrupted", "github_outcome_unknown"])
 @pytest.mark.parametrize("limit", ["deadline", "invocations"])
 def test_recovery_cannot_reopen_exhausted_global_limits(batch, reason, limit):
