@@ -21,6 +21,7 @@
 <p align="center">
   <a href="README.md">English</a> · <strong>简体中文</strong><br>
   <a href="#快速开始">快速开始</a> ·
+  <a href="#使用当前桌面-agent">桌面 agent</a> ·
   <a href="#运行项目任务">运行项目任务</a> ·
   <a href="#处理-github-issue">处理 issue</a> ·
   <a href="docs/getting-started.md">文档</a> ·
@@ -45,7 +46,7 @@ DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续�
   <img src="docs/assets/workflow-light.svg" alt="发现有证据支持的工作，在 worktree 中实施，运行操作者指定的检查，单独调用复核，再提交通过验收的改动并继续发现工作" width="1200">
 </picture>
 
-你一次性定义职责和验收命令。DutyLoop 围绕现有的开发 CLI，管理 worktree、调用额度预留、 暂存快照检查、复核调用和持久状态。
+你一次性定义职责和验收命令。DutyLoop 管理 worktree、阶段额度预留、暂存快照检查、复核和持久状态。可以通过 MCP 使用当前本地桌面开发 agent，也可以选择原生开发 CLI 适配器。
 
 | 能力 | 带来的作用 |
 | --- | --- |
@@ -83,6 +84,19 @@ dutyloop demo --directory ../dutyloop-demo
 ```
 
 这里只展示演示结果的一部分。完整输出还包含任务快照和产物位置。 [验证记录](docs/validation.md)说明了离线检查与已认证宿主运行之间的区别。
+
+## 使用当前桌面 agent
+
+设置 `driver: {"name": "desktop"}`，让当前本地 Codex 或 Claude Code 桌面对话执行工作。DutyLoop 通过 MCP 提供各阶段提示，并负责验证、提交及已配置的 issue 交付。它不选择模型，也不启动另一个需要模型 CLI 登录的进程。
+
+```console
+python -m pip install -e ".[mcp]"
+python -m dutyloop desktop-config --client codex --root /absolute/path/to/dutyloop-states --allow-project /absolute/path/to/project
+```
+
+Claude 使用 `--client claude` 输出 JSON 配置。命令只打印配置，由你合并到宿主的本地 MCP 设置；不会修改宿主设置或开始工作。将[桌面 issue 配置](examples/desktop-issues.json)或[持续任务配置](examples/desktop-mission.json)复制到目标仓库之外，替换路径和检查命令，再按[桌面交接指南](docs/desktop.md)连接并使用其中可直接粘贴的宿主提示。
+
+宿主领取每个阶段，在 DutyLoop 指定的受管理 checkout 中执行，并按返回的 schema 提交结果。复核必须使用新的子 agent 或对话上下文。DutyLoop 无法终止桌面对话启动的 shell 或子 agent；提交或取消前必须完成或停止这些工作。目前尚未在实际 Codex/Claude 桌面应用中验证完整执行；仅连接 MCP 不会唤醒空闲对话。
 
 ## 运行项目任务
 
@@ -167,6 +181,7 @@ DutyLoop 使用现有的宿主安装和认证。通过 `driver.name` 选择适�
 
 | 集成 | 适配方式 | 验证覆盖 |
 | --- | --- | --- |
+| **当前本地桌面 agent** | `driver.name: desktop`，通过 MCP 交接阶段 | 离线约定检查；实际 Codex/Claude 桌面执行尚未验证 |
 | **Codex CLI** | 原生结构化输出 | 离线协议测试，以及一次历史记录中的已认证小型测试项目运行 |
 | **Claude Code CLI** | 原生结构化输出 | 离线协议测试 |
 | **OpenCode 2.2.5** | 固定版本的原生 JSON 事件 | 固定版本源码检查和离线协议测试 |
@@ -184,7 +199,7 @@ python -m pip install -e ".[mcp]"
 dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 ```
 
-提供的工具包括 `mission_create`、`mission_start`、`mission_status`、`mission_events` 和 `mission_stop`。创建任务不会启动工作。按照 [MCP 配置](docs/mcp.md)设置客户端和项目白名单。MCP 接口控制持续职责任务；issue 批次使用 CLI。宿主支持 MCP，并不代表它拥有原生执行适配器。
+工具支持持续任务及 issue 批次的创建、启动、状态、事件、停止和显式恢复；issue 决策使用 `issues_resolve`。桌面 worker 通过 `desktop_next`、`desktop_submit` 和 `desktop_cancel` 领取并返回阶段结果。创建任务不会开始工作。按照 [MCP 配置](docs/mcp.md)设置客户端和项目白名单；使用当前对话时参照[桌面指南](docs/desktop.md)。MCP 能连接并不能证明宿主能够完整执行工作。
 
 </details>
 
@@ -192,10 +207,10 @@ dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 
 **Alpha 阶段，运行边界明确。**离线行为测试、脚本端到端演示和已记录的宿主检查， 覆盖了特定的控制约定。长期有效性和维护者工作量的改善仍需在真实项目中评估； 尚无对照结果证明其效果优于其他方案。
 
-issue 工作流已有离线队列和交付验证，尚无已认证的真实项目批次记录。Claude Code 各阶段使用新进程，可读取已提交的项目指令；续接现有对话和加载特定安装环境的自动记忆尚未验证。
+issue 工作流已有离线队列和交付验证，尚无已认证的真实项目批次记录。原生 Claude Code 适配器的各阶段使用新进程，可读取已提交的项目指令。桌面驱动器将阶段交给当前对话；实际桌面执行、复核隔离及特定安装环境的记忆行为仍未验证。
 
 - **运行上限：**调用次数统计外层驱动器调用，不逐一统计宿主请求或子 agent。
-  时间上限包括首次运行后的等待和离线时间。
+  桌面模式统计阶段交接，模型用量保持未知。时间上限包括首次运行后的等待和离线时间。
 - **费用：**不支持美元硬上限。无法获得的用量或费用保持未知。
 - **权限：**允许路径约束的是改动接纳。worktree 仍使用宿主的文件系统、网络、凭据和 Git 访问权限，不构成沙箱。
 - **验收：**使用可信且不修改受检内容的检查命令。agent 能改写的测试和单独一次模型复核，不能构成独立的正确性依据。
@@ -207,6 +222,7 @@ issue 工作流已有离线队列和交付验证，尚无已认证的真实项�
 | 指南 | 适用场景 |
 | --- | --- |
 | [上手指南](docs/getting-started.md) | 准备项目、运行任务并检查结果分支 |
+| [桌面 agent](docs/desktop.md) | 通过 MCP 使用当前本地开发对话 |
 | [配置参考](docs/configuration.md) | 设置路径、检查、约束、驱动器和运行上限 |
 | [GitHub issue](docs/issues.md) | 规划待办、处理人工决定，配置 PR 与合并交付 |
 | [示例](examples/README.md) | 调整维护或文档任务配置 |

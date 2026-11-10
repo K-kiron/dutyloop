@@ -39,6 +39,7 @@ class DriverResult:
     timed_out: bool = False
     cleanup_confirmed: bool = True
     error_kind: str | None = None
+    cleanup_scope: str = "managed_process"
 
 
 def probe_driver(name: str) -> dict:
@@ -259,9 +260,14 @@ def _reported_failure_kind(name, text):
     return None
 
 
-def get_driver(config: dict):
+def get_driver(config: dict, *, state_dir: Path | None = None):
     config = dict(config)
     name = config.get("name", "codex")
+    if name == "desktop":
+        from .desktop import DesktopDriver
+        if set(config) != {"name"} or state_dir is None:
+            raise ValueError("desktop requires a state directory and only driver.name")
+        return DesktopDriver(state_dir)
     if name not in {*NATIVE_DRIVERS, "command"}:
         raise ValueError("driver name must be " + ", ".join(NATIVE_DRIVERS) + ", or command")
     if name == "command":

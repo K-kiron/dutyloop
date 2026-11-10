@@ -7,8 +7,11 @@ every open issue can be resolved automatically.
 
 ## Prepare and inspect plans
 
-Install and authenticate a supported coding CLI and the GitHub CLI (`gh`) using
-their existing setup. Configure a Git author identity. The target repository
+Install and authenticate the GitHub CLI (`gh`) using its existing setup.
+Choose a [current desktop agent](desktop.md) through MCP, or install and
+authenticate a supported coding CLI for native execution. The CLI examples
+below use native execution; desktop workers follow the handoff guide instead.
+Configure a Git author identity. The target repository
 needs committed code and trusted verification commands that work in a fresh
 worktree. Its configured fetch and push remote must both identify the selected
 `github.com` repository; forks and GitHub Enterprise are not supported here.
@@ -187,9 +190,16 @@ your existing interactive conversation. Loading your installation's automatic
 memory has not been verified. Keep essential instructions and check commands
 in committed project files and the operator configuration.
 
-The optional MCP server currently controls standing missions only. A Claude Code
-session can invoke the issue CLI through its shell tool when authorized; there
-are no `issue_*` MCP tools.
+For your current local coding conversation, set `driver` to
+`{"name": "desktop"}` and use the [desktop handoff guide](desktop.md).
+`issues_create`, `issues_start`, `issues_status`, `issues_stop`, `issues_events`,
+`issues_recover`, and `issues_resolve` control issue batches over MCP.
+`desktop_next`, `desktop_submit`, and `desktop_cancel` transfer individual
+phases; DutyLoop retains operator verification, commits, and configured delivery.
+No separate model CLI login is required for desktop execution. The host must
+stop its own phase work before submitting or cancelling, and review must be
+claimed by an actual fresh context or subagent. Actual desktop app execution
+and review isolation have not yet been verified.
 
 Issue queue and delivery verification currently uses offline fixtures and
 simulated hosts/GitHub responses. No authenticated real-project batch establishes

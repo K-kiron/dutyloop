@@ -9,12 +9,13 @@ offline fixtures do not establish account access or model effectiveness.
 
 | Host/interface | Adapter | Recorded coverage | Important conditions |
 | --- | --- | --- | --- |
+| Current local desktop agent | MCP phase handoff with `driver.name: desktop` | Local protocol checks; actual Codex/Claude desktop execution unverified | Host claims phases and executes at the returned managed `cwd`; no separate model CLI login or model selection. |
 | Codex CLI | Native structured-output | Offline tests; authenticated fixture on CLI 0.156.1 with `gpt-6-sol`, recorded 2026-10-29 | Installed CLI/login/model access required; the historical fixture does not certify every current version. |
 | Claude Code CLI | Native structured-output | Offline protocol fixtures; historical executable/version probe | No authenticated complete mission recorded. |
 | OpenCode CLI **2.2.5** | Version-pinned native JSON events | Official versioned source and offline protocol fixtures | Other versions rejected before model work; existing provider setup required. |
 | DeepSeek Harness **0.2.2-rc.1** | Version-pinned native headless JSON events | Official versioned source and offline protocol fixtures | Other versions rejected; headless profile/environment authentication required; no `driver.model` override. |
 | OpenHands and other runtimes | Custom wrapper only | No host-specific native validation | Operator supplies the documented wrapper and verifies its actual host behavior. |
-| MCP | Local stdio control | Official SDK protocol test | Manually configured client; not a universal execution adapter. |
+| MCP | Local stdio control for missions and issue batches | Official SDK protocol test | Manually configured client and project allowlist; connectivity does not certify execution in a host. |
 
 OpenCode here means the Anomaly OpenCode CLI protocol at the pinned revision,
 not an assumption that similarly named tools or older major versions share an
@@ -25,9 +26,9 @@ revisions](adapter-protocol.md).
 
 | Control | What is enforced | What is not promised |
 | --- | --- | --- |
-| `max_invocations` | A driver-call reservation before dispatch; discovery, implementation, and review each count. | A token count, provider-request count, or cap on child agent/subagent activity. |
-| `max_wall_seconds` | Elapsed time from the first run; dispatch stops at the deadline and active managed processes are cancelled. | CPU time, active-work-only time, or an exact provider billing boundary. Waiting and subsequent downtime consume this limit. |
-| Explicit stop | A persisted stop latch, dispatch checks, and cancellation of managed processes. | Reversal of a file write, API call, charge, or other effect that has already happened. |
+| `max_invocations` | A driver-call reservation before dispatch; discovery, implementation, and review each count. Desktop phases count handoffs. | A token count, provider-request count, or cap on host/subagent activity. |
+| `max_wall_seconds` | Elapsed time from the first run; dispatch stops at the deadline and active managed processes are cancelled. Desktop claims expire. | Termination of desktop-owned work, CPU time, or an exact provider billing boundary. Waiting and subsequent downtime consume this limit. |
+| Explicit stop | A persisted stop latch, dispatch checks, and cancellation of managed processes. | Termination of desktop-owned shells/subagents, or reversal of effects that have already happened. |
 | Reported usage/cost | Telemetry when the host supplies it; unknown values remain unknown. | A dollar spending guarantee. USD hard-cap configuration is rejected. |
 
 An interrupted or failed invocation remains charged against the invocation
@@ -35,6 +36,33 @@ limit. Recovery does not silently erase that charge or replay unknown work.
 Deadlines trigger cancellation on the next supervisor poll. Process cleanup can
 extend elapsed runtime beyond the configured window; this is not a real-time
 termination guarantee.
+
+## Desktop handoff boundaries
+
+The [desktop driver](desktop.md) exposes pending phases through local MCP tools.
+Your existing conversation calls `desktop_next`, performs the returned prompt,
+and returns a schema-checked payload. DutyLoop does not invoke the host model or
+wake an idle conversation. Reading, connecting, or creating state does not start
+model work. Native adapters keep their existing launch behavior when selected.
+
+The host must finish or stop every shell, background task, and subagent before
+submitting or cancelling with `work_stopped: true`. This is a declaration by the
+host; DutyLoop cannot inspect or terminate those processes. Desktop cleanup
+evidence is labeled `host_declaration`, distinct from native
+`managed_process` cleanup. An expired active claim is retained as unknown and
+quarantined; it is not automatically reassigned. Inspect work, stop all external
+activity, and explicitly recover before continuing. Old claim tokens become
+invalid after recovery.
+
+Review must use an actual fresh context or subagent. Different `context_id`
+strings prevent accidental identity reuse but do not prove isolation. Host
+permissions must allow the exact managed `cwd`; the original checkout, a cloud
+clone, and a Windows or WSL path are not interchangeable.
+
+Desktop model usage and cost remain unknown. Phase budgets do not cap the
+conversation's provider calls, thinking, or subagents. Issue delivery defaults
+to local and retains its explicit PR/merge settings and protection gates;
+standing missions remain local.
 
 ## Scope and execution authority
 
@@ -100,7 +128,9 @@ inspection.
    fixture has authenticated end-to-end evidence.
 2. **Wrapper compatibility:** custom commands that implement the documented
    protocol; no host-specific compatibility is implied.
-3. **Control integration:** optional MCP over the same local engine.
+3. **Desktop handoff:** an existing local coding conversation uses the desktop
+   driver's MCP phase contract. Actual desktop app execution is unverified.
+4. **Control integration:** optional MCP over the same local engine.
 
 The local fake-driver demo covers real engine calls, separate Git worktrees,
 verification, acceptance, continuation, and invocation exhaustion. It does not

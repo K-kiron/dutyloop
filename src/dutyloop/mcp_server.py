@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
+import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .cli import _reject_link, error_payload, start_background
 from .drivers import NATIVE_DRIVERS
+from .store import runner_lock
 
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*", re.ASCII)
 _RESERVED_NAMES = {"con", "prn", "aux", "nul"} | {
@@ -56,6 +60,7 @@ class ControlPlane:
         return state
 
     def _authorized_snapshot(self, state: Path) -> dict:
+        self._unambiguous(state)
         snapshot = _engine().status(state)
         project = snapshot.get("project")
         if not isinstance(project, str) or _safe_path(project) not in self.projects:
@@ -75,6 +80,14 @@ class ControlPlane:
     def mission_create(self, name: str, spec: dict) -> dict:
         """Initialize only; verification argv is operator authorization to execute those commands when started."""
         state = self._state(name)
+        supplied = self._project_spec(spec)
+        state.mkdir(parents=True, exist_ok=True)
+        with runner_lock(state):
+            if (state / "issues.sqlite3").exists():
+                raise ValueError("This name already belongs to an issue batch")
+            return _engine().initialize(supplied, state)
+
+    def _project_spec(self, spec: dict) -> dict:
         if not isinstance(spec, dict):
             raise ValueError("The mission spec must be an object.")
         supplied = copy.deepcopy(spec)
@@ -90,17 +103,17 @@ class ControlPlane:
             if project not in self.projects:
                 raise ValueError("The selected project must exactly match a registered allowlist root.")
         driver = supplied.get("driver", {"name": "codex"})
-        if not self._native_driver(driver):
-            raise ValueError("MCP driver configuration accepts only supported native drivers and an optional model.")
+        if not self._native_driver(driver) and driver != {"name": "desktop"}:
+            raise ValueError("MCP driver configuration accepts native drivers or desktop; custom commands are not permitted.")
         supplied["project"] = str(project)
-        return _engine().initialize(supplied, state)
+        return supplied
 
     def mission_start(self, name: str) -> dict:
         """Launch a background runner; this may execute the mission's authorized verification commands."""
         state = self._state(name)
         snapshot = self._authorized_snapshot(state)
-        if not self._native_driver(snapshot.get("driver")):
-            raise ValueError("MCP can start only stored missions using a supported native driver.")
+        if not self._native_driver(snapshot.get("driver")) and snapshot.get("driver") != {"name": "desktop"}:
+            raise ValueError("MCP can start only stored missions using a supported native driver or desktop.")
         return start_background(state)
 
     def mission_status(self, name: str) -> dict:
@@ -118,6 +131,130 @@ class ControlPlane:
         state = self._state(name)
         self._authorized_snapshot(state)
         return _engine().events(state, after_id=after, limit=limit)
+
+    def mission_recover(self, name: str, acknowledge: bool = False) -> dict:
+        state = self._state(name)
+        self._authorized_snapshot(state)
+        return _engine().recover(state, acknowledge=acknowledge)
+
+    def _issues_snapshot(self, state: Path) -> dict:
+        from . import issues
+        self._unambiguous(state)
+        snapshot = issues.status(state)
+        spec = snapshot["spec"]
+        if _safe_path(spec["project"]) not in self.projects:
+            raise ValueError("The stored issue project must exactly match a registered allowlist root.")
+        if not self._native_driver(spec["driver"]) and spec["driver"] != {"name": "desktop"}:
+            raise ValueError("MCP accepts native drivers or desktop, not custom commands.")
+        return snapshot
+
+    @staticmethod
+    def _unambiguous(state):
+        if (state / "mission.sqlite3").exists() and (state / "issues.sqlite3").exists():
+            raise ValueError("Ambiguous state contains both mission and issue databases; inspect it before continuing")
+
+    def issues_create(self, name: str, spec: dict) -> dict:
+        from . import issues
+        if not isinstance(spec, dict):
+            raise ValueError("Issue spec must be an object")
+        supplied = copy.deepcopy(spec)
+        supplied.setdefault("driver", {"name": "desktop"})
+        state = self._state(name)
+        supplied = self._project_spec(supplied)
+        state.mkdir(parents=True, exist_ok=True)
+        with runner_lock(state):
+            if (state / "mission.sqlite3").exists():
+                raise ValueError("This name already belongs to a mission")
+            return issues.initialize(supplied, state)
+
+    def issues_start(self, name: str, plan_only: bool = False) -> dict:
+        state = self._state(name)
+        self._issues_snapshot(state)
+        if type(plan_only) is not bool:
+            raise ValueError("plan_only must be boolean")
+        return start_background(state, issue_batch=True, plan_only=True) if plan_only else start_background(state, issue_batch=True)
+
+    def issues_status(self, name: str) -> dict:
+        return self._issues_snapshot(self._state(name))
+
+    def issues_stop(self, name: str) -> dict:
+        from . import issues
+        state = self._state(name)
+        self._issues_snapshot(state)
+        return issues.stop(state)
+
+    def issues_events(self, name: str, after: int = 0, limit: int = 20) -> dict:
+        from . import issues
+        state = self._state(name)
+        self._issues_snapshot(state)
+        return issues.events(state, after_id=after, limit=limit)
+
+    def issues_recover(self, name: str, acknowledge: bool = False) -> dict:
+        from . import issues
+        state = self._state(name)
+        self._issues_snapshot(state)
+        return issues.recover(state, acknowledge=acknowledge)
+
+    def issues_resolve(self, name: str, number: int, decision: str) -> dict:
+        from . import issues
+        state = self._state(name)
+        self._issues_snapshot(state)
+        return issues.resolve(state, number, decision)
+
+    def _desktop_state(self, name: str, kind: str):
+        state = self._state(name)
+        if kind == "issues":
+            snapshot = self._issues_snapshot(state)
+        elif kind == "mission":
+            snapshot = self._authorized_snapshot(state)
+        else:
+            raise ValueError("kind must be issues or mission")
+        spec = snapshot.get("spec", snapshot)
+        if spec["driver"] != {"name": "desktop"}:
+            raise ValueError("Desktop work tools require driver.name=desktop")
+        return state, snapshot
+
+    @staticmethod
+    def _closed(snapshot):
+        return (snapshot["status"] in {"completed", "limited", "blocked", "stopped"}
+                or snapshot.get("stop_requested")
+                or snapshot.get("deadline") is not None and snapshot["deadline"] <= time.time())
+
+    def desktop_next(self, name: str, worker_id: str, context_id: str, kind: str = "issues") -> dict:
+        from .desktop import DesktopQueue
+        state, snapshot = self._desktop_state(name, kind)
+        if self._closed(snapshot):
+            return {"status": snapshot["status"], "reason": snapshot.get("reason"), "work_available": False}
+        return DesktopQueue(state).claim(worker_id, context_id)
+
+    def desktop_submit(self, name: str, request_id: str, token: str, worker_id: str,
+                       context_id: str, payload: dict, work_stopped: bool, kind: str = "issues") -> dict:
+        from .desktop import DesktopQueue
+        state, snapshot = self._desktop_state(name, kind)
+        if self._closed(snapshot) and not (state / "desktop.sqlite3").exists():
+            raise ValueError("Batch is stopped, blocked, completed or exhausted; stop host tools and cancel retained work")
+        return DesktopQueue(state).submit(request_id, token, worker_id, context_id, payload, work_stopped,
+                                          accept_new=not self._closed(snapshot))
+
+    def desktop_cancel(self, name: str, request_id: str, token: str, worker_id: str,
+                       context_id: str, work_stopped: bool, kind: str = "issues") -> dict:
+        from .desktop import DesktopQueue
+        state, _ = self._desktop_state(name, kind)
+        return DesktopQueue(state).cancel(request_id, token, worker_id, context_id, work_stopped)
+
+
+def desktop_configuration(client: str, root: Path, projects: Iterable[Path]) -> str:
+    """Render connection settings only. Never modify the host's configuration."""
+    controller = ControlPlane(root, projects)
+    args = ["-m", "dutyloop", "mcp", "--root", str(controller.root)]
+    for project in controller.projects:
+        args.extend(["--allow-project", str(project)])
+    if client == "claude":
+        return json.dumps({"mcpServers": {"dutyloop": {"command": sys.executable, "args": args}}}, indent=2)
+    if client == "codex":
+        return ("[mcp_servers.dutyloop]\ncommand = " + json.dumps(sys.executable, ensure_ascii=False)
+                + "\nargs = " + json.dumps(args, ensure_ascii=False) + "\ntool_timeout_sec = 60\n")
+    raise ValueError("client must be codex or claude")
 
 
 def _tool_result(action: Callable[[], dict]) -> dict:
@@ -139,7 +276,7 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
 
     @server.tool()
     def mission_create(name: str, spec: dict[str, Any]) -> dict:
-        """Create without starting. Supplying verification argv is operator authorization to execute those commands on start. Projects must exactly match the operator's allowlist; only native CLI drivers are permitted."""
+        """Create without starting. Verification argv is authorization to execute those commands on start. Projects must exactly match the allowlist; native or desktop drivers only."""
         return _tool_result(lambda: controller.mission_create(name, spec))
 
     @server.tool()
@@ -161,5 +298,64 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
     def mission_events(name: str, after: int = 0, limit: int = 20) -> dict:
         """Read ordered audit events after a cursor without starting or recovering work."""
         return _tool_result(lambda: controller.mission_events(name, after, limit))
+
+    @server.tool()
+    def mission_recover(name: str, acknowledge: bool = False) -> dict:
+        """Recover only after inspecting retained work and stopping orphaned host tools. Unknown calls stay charged."""
+        return _tool_result(lambda: controller.mission_recover(name, acknowledge))
+
+    @server.tool()
+    def issues_create(name: str, spec: dict[str, Any]) -> dict:
+        """Snapshot open issues using read-only GitHub access; default to desktop execution. Verification and optional delivery settings are operator authorization on start."""
+        return _tool_result(lambda: controller.issues_create(name, spec))
+
+    @server.tool()
+    def issues_start(name: str, plan_only: bool = False) -> dict:
+        """Start the backlog coordinator, optionally planning only. Desktop mode waits for this host to claim and complete phases; it invokes no model CLI."""
+        return _tool_result(lambda: controller.issues_start(name, plan_only))
+
+    @server.tool()
+    def issues_status(name: str) -> dict:
+        """Read backlog progress and decisions without starting work."""
+        return _tool_result(lambda: controller.issues_status(name))
+
+    @server.tool()
+    def issues_stop(name: str) -> dict:
+        """Stop future backlog dispatch. The host must separately stop its own tools and subagents; active work may remain unknown."""
+        return _tool_result(lambda: controller.issues_stop(name))
+
+    @server.tool()
+    def issues_events(name: str, after: int = 0, limit: int = 20) -> dict:
+        """Read ordered issue audit events after a cursor without starting work."""
+        return _tool_result(lambda: controller.issues_events(name, after, limit))
+
+    @server.tool()
+    def issues_recover(name: str, acknowledge: bool = False) -> dict:
+        """Explicit read-only reconciliation after the operator inspects work and stops orphaned host tools; never replay uncertain work."""
+        return _tool_result(lambda: controller.issues_recover(name, acknowledge))
+
+    @server.tool()
+    def issues_resolve(name: str, number: int, decision: str) -> dict:
+        """Record an operator decision for replanning without resetting limits or publishing."""
+        return _tool_result(lambda: controller.issues_resolve(name, number, decision))
+
+    @server.tool()
+    def desktop_next(name: str, worker_id: str, context_id: str, kind: str = "issues") -> dict:
+        """Claim one desktop phase. Follow its exact cwd, prompt and schema. Review needs a fresh reviewer context; IDs are self-reported. Poll waiting responses only while the host task is active."""
+        return _tool_result(lambda: controller.desktop_next(name, worker_id, context_id, kind))
+
+    @server.tool()
+    def desktop_submit(name: str, request_id: str, token: str, worker_id: str, context_id: str,
+                       payload: dict[str, Any], work_stopped: bool, kind: str = "issues") -> dict:
+        """Submit structured results only after all tools/subagents for this phase have stopped. work_stopped is a cooperative host declaration, not OS containment. DutyLoop still runs acceptance checks."""
+        return _tool_result(lambda: controller.desktop_submit(name, request_id, token, worker_id,
+                                                              context_id, payload, work_stopped, kind))
+
+    @server.tool()
+    def desktop_cancel(name: str, request_id: str, token: str, worker_id: str, context_id: str,
+                       work_stopped: bool, kind: str = "issues") -> dict:
+        """Acknowledge cancellation only after stopping host tools. Retain expired/unknown work for explicit recovery; do not reassign it."""
+        return _tool_result(lambda: controller.desktop_cancel(name, request_id, token, worker_id,
+                                                              context_id, work_stopped, kind))
 
     return server

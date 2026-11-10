@@ -62,10 +62,12 @@ def validate_spec(spec: dict, state_dir: Path) -> dict:
     project, state = plain_path(Path(spec["project"])), plain_path(state_dir)
     if state == project or project in state.parents or state in project.parents:
         raise ValueError("State directory must be outside the project and must not contain it")
-    result = subprocess.run(["git", "-C", str(project), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=10)
+    result = subprocess.run(["git", "-C", str(project), "rev-parse", "--show-toplevel"],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
     if result.returncode or Path(result.stdout.strip()).resolve() != project:
         raise ValueError("project must name the root of an existing Git repository")
-    head = subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, timeout=10)
+    head = subprocess.run(["git", "-C", str(project), "rev-parse", "--verify", "HEAD^{commit}"],
+                          stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
     if head.returncode:
         raise ValueError("project needs at least one committed revision; missions inspect committed HEAD")
     paths = spec.get("allowed_paths")
@@ -86,8 +88,10 @@ def validate_spec(spec: dict, state_dir: Path) -> dict:
     }
     driver = spec.get("driver", {"name": "codex"})
     _unknown(driver, {"name", "model", "argv"}, "driver")
-    if driver.get("name") not in {*NATIVE_DRIVERS, "command"}:
-        raise ValueError("driver.name must be a supported native driver or command")
+    if driver.get("name") not in {*NATIVE_DRIVERS, "command", "desktop"}:
+        raise ValueError("driver.name must be a supported native driver, desktop, or command")
+    if driver.get("name") == "desktop" and set(driver) != {"name"}:
+        raise ValueError("desktop uses the connected host's model; configure only driver.name")
     if driver.get("model") is not None and (not isinstance(driver["model"], str) or not driver["model"].strip()):
         raise ValueError("driver.model must be a nonempty string or null")
     if driver["name"] == "command":
@@ -114,7 +118,7 @@ def validate_spec(spec: dict, state_dir: Path) -> dict:
         raise ValueError("research_domains must contain hostnames")
     branch = spec.get("branch")
     if branch is not None:
-        if not isinstance(branch, str) or re.match(r"(?i)(codex|claude|chatgpt|copilot)/", branch) or subprocess.run(["git", "check-ref-format", "--branch", branch], capture_output=True, timeout=10).returncode:
+        if not isinstance(branch, str) or re.match(r"(?i)(codex|claude|chatgpt|copilot)/", branch) or subprocess.run(["git", "check-ref-format", "--branch", branch], stdin=subprocess.DEVNULL, capture_output=True, timeout=10).returncode:
             raise ValueError("branch must be a functional Git branch name")
     return {
         "version": 1, "mission": mission.strip(), "project": str(project),

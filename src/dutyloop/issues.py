@@ -78,6 +78,9 @@ def recover(state_dir, *, acknowledge=False, github=None):
     store = IssueStore(state_dir)
     with runner_lock(store.directory):
         original = store.control()
+        if acknowledge is True and original["spec"]["driver"]["name"] == "desktop":
+            from .desktop import DesktopQueue
+            DesktopQueue(store.directory).invalidate()
         store.recover(acknowledge=acknowledge)
         if (original["status"] == "blocked" and original["reason"] in {"batch_interrupted", "github_outcome_unknown"}
                 and not store.control()["stop_requested"]
@@ -162,6 +165,7 @@ class _BudgetDriver:
             "cost_usd": result.cost_usd, "usage": result.usage,
             "cancelled": result.cancelled, "timed_out": result.timed_out,
             "cleanup_confirmed": result.cleanup_confirmed,
+            "cleanup_scope": result.cleanup_scope,
         }, unknown=not result.cleanup_confirmed)
         if not result.cleanup_confirmed:
             runner.store.set_status("blocked", "worker_cleanup_unconfirmed")
@@ -585,7 +589,7 @@ def run(state_dir, *, driver=None, github=None, plan_only=False):
             raise RuntimeError("Interrupted batch requires issues recover --acknowledge; effects are never replayed")
         if not store.begin():
             return store.snapshot()
-        runner = IssueRunner(store, driver or get_driver(snapshot["spec"]["driver"]), interrupted, github)
+        runner = IssueRunner(store, driver or get_driver(snapshot["spec"]["driver"], state_dir=store.directory), interrupted, github)
         handlers = {}
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGINT, signal.SIGTERM):
