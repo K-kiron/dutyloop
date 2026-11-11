@@ -24,6 +24,7 @@
   <a href="#use-your-current-desktop-agent">Desktop agent</a> ·
   <a href="#run-a-project-mission">Run a mission</a> ·
   <a href="#process-github-issues">Process issues</a> ·
+  <a href="#maintain-a-repository">Repository maintenance</a> ·
   <a href="docs/getting-started.md">Documentation</a> ·
   <a href="https://github.com/K-kiron/dutyloop/issues/new/choose">Report an issue</a>
 </p>
@@ -35,6 +36,11 @@ DutyLoop is a local supervisor for coding agents with an ongoing job to do. Give
 Accepted changes accumulate on a **separate local Git branch**, with task rationale, verification results, and review records. Discovery continues after each accepted task, until a limit, blocker, or your stop command ends the run.
 
 Already have a backlog? [Issue mode](#process-github-issues) captures open GitHub issues, plans and implements eligible work, and sets aside items needing your decision. Delivery defaults to local branches; you can explicitly enable PR creation, CI-gated merging, and verified issue closure.
+
+For ongoing ownership, [repository mode](#maintain-a-repository) reconciles new
+issues and keeps following owned PRs through CI and review. Begin in observation
+mode, inspect the plans and attention list, then explicitly enable execution
+within the same persistent budget.
 
 ## How it works
 
@@ -51,6 +57,7 @@ You define the responsibility and acceptance commands once. DutyLoop manages the
 | Capability | What it gives you |
 | --- | --- |
 | **Ongoing discovery** | One to three workers inspect current evidence and propose tasks with acceptance criteria. |
+| **Repository coordination** | Incremental issue intake, durable input receipts, owned-PR maintenance and a consolidated attention list. |
 | **Focused delivery** | Implementation and acceptance stay serial, with managed worktrees for each attempt. |
 | **Checks you control** | Your commands run against materialized staged files; changes during verification prevent acceptance. |
 | **Inspectable results** | Accepted commits, verified tree IDs, task feedback, and retained rejected or interrupted attempts. |
@@ -166,6 +173,33 @@ Automatic merge also requires readable, existing branch protection that enforces
 
 See [the issue workflow guide](docs/issues.md) for configuration, background execution, decisions, recovery, and delivery boundaries. Coverage is currently offline; an authenticated real-project issue batch has not been verified.
 
+## Maintain a repository
+
+Repository mode keeps accepting incremental issues and following owned pull
+requests, with a task/attempt view and structured human attention. Copy
+[repository.json](examples/repository.json) outside the target repository and
+replace its paths and checks. It defaults to observation and local delivery:
+
+```console
+dutyloop repository init --spec repository.json --state ../repository-state
+dutyloop repository run --state ../repository-state
+dutyloop repository status --state ../repository-state --human
+dutyloop repository attention --state ../repository-state
+```
+
+After inspecting the plans, explicitly enable execution with `repository
+set-mode --state ../repository-state --mode auto`, then use `repository start`
+to continue in the background. Observation plans the captured backlog but does
+not implement it. Unchanged idle reconciliation makes no model call; all waiting,
+attempts and restarts share the original invocation and wall-time limits.
+
+PR maintenance is separate from permission to merge. With `delivery:
+pull_request`, CI failures and trusted review feedback can return the same owned
+PR to planning and repair. Changed requirements and missing decisions remain
+visible for you. Desktop execution still needs an active host conversation.
+See [repository maintenance](docs/repository.md) for intake, decisions, stop,
+recovery and MCP controls.
+
 ## Where it fits
 
 | Responsibility | Useful inputs | Deliverable |
@@ -183,7 +217,7 @@ DutyLoop uses existing host installations and authentication. Choose the adapter
 | Integration | Adapter | Verification coverage |
 | --- | --- | --- |
 | **Current local desktop agent** | MCP phase handoff with `driver.name: desktop` | Offline contract checks; actual Codex/Claude desktop execution unverified |
-| **Codex CLI** | Native structured output | Offline protocols + one historical authenticated fixture mission |
+| **Codex CLI** | Native structured output | Offline protocols + bounded authenticated mission and repository fixtures |
 | **Claude Code CLI** | Native structured output | Offline protocols |
 | **OpenCode 2.2.5** | Native, version-pinned JSON events | Pinned-source inspection + offline protocols |
 | **DeepSeek Harness 0.2.2-rc.1** | Native, version-pinned headless execution | Pinned-source inspection + offline protocols |
@@ -203,6 +237,10 @@ dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 Tools cover mission and issue creation, start, status, events, stop, and explicit recovery; issue decisions use `issues_resolve`. Desktop workers claim and return phases with `desktop_next`, `desktop_submit`, and `desktop_cancel`. Creation does not start work. Configure your client and project allowlist as described in [MCP setup](docs/mcp.md); use the [desktop guide](docs/desktop.md) for your current conversation. MCP connectivity alone does not certify host execution.
 
 </details>
+
+Repository coordination also exposes `repository_*` controls for reconciliation,
+observation/automatic mode selection, attention and decisions, using the same
+project allowlist and desktop phase mailbox.
 
 ## Project status
 
@@ -229,6 +267,7 @@ Keep mission state and transcripts private. Read [limits and host support](docs/
 | [Desktop agent](docs/desktop.md) | Use your current local coding conversation through MCP |
 | [Configuration](docs/configuration.md) | Set paths, checks, constraints, drivers, and limits |
 | [GitHub issues](docs/issues.md) | Plan a backlog, handle decisions, and configure PR/merge delivery |
+| [Repository maintenance](docs/repository.md) | Reconcile new issues, maintain owned PRs, and handle human attention |
 | [Examples](examples/README.md) | Adapt a maintenance or documentation mission |
 | [Operations](docs/operations.md) | Monitor events, stop work, and handle recovery |
 | [Adapter protocol](docs/adapter-protocol.md) | Build a host wrapper or understand native contracts |

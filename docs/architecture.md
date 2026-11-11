@@ -1,5 +1,13 @@
 # Mission lifecycle
 
+Repository coordination sits above this bounded execution engine. Its durable
+intake records map source snapshots to issue tasks; each task can have several
+child execution attempts and one owned PR. Reconciliation reads external facts,
+deduplicates inputs and derives attention. Execution retains the scope checks,
+verification and review described below. Observation and automatic intake are
+explicit modes, and PR maintenance is separate from merge permission. See
+[repository maintenance](repository.md) for the public workflow.
+
 The mission is the persistent unit of responsibility. Tasks are temporary units
 of delivery discovered while pursuing that responsibility.
 

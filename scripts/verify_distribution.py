@@ -32,12 +32,17 @@ def main() -> None:
                                              cwd=directory, env=environment, text=True, timeout=10)
         if "--plan-only" not in issue_help:
             raise RuntimeError("Installed wheel is missing the issue workflow CLI")
+        repository_help = subprocess.check_output(
+            [str(executable), "-m", "dutyloop", "repository", "set-mode", "--help"],
+            cwd=directory, env=environment, text=True, timeout=10)
+        if "--mode" not in repository_help:
+            raise RuntimeError("Installed wheel is missing repository coordination")
         desktop_help = subprocess.check_output([str(executable), "-m", "dutyloop", "desktop-config", "--help"],
                                                cwd=directory, env=environment, text=True, timeout=10)
         if "--client" not in desktop_help:
             raise RuntimeError("Installed wheel is missing desktop configuration")
         # Import the actual issue controller outside source without contacting GitHub.
-        subprocess.run([str(executable), "-c", "from dutyloop import issues, desktop; assert callable(issues.run); assert callable(desktop.DesktopDriver)"],
+        subprocess.run([str(executable), "-c", "from dutyloop import issues, desktop, repository; assert callable(issues.run); assert callable(repository.reconcile); assert callable(desktop.DesktopDriver)"],
                        cwd=directory, env=environment, check=True, timeout=10)
         demo = subprocess.run([str(executable), "-m", "dutyloop", "demo", "--directory", str(directory / "demo")],
                               cwd=directory, env=environment, text=True, capture_output=True, timeout=180)
@@ -49,7 +54,8 @@ def main() -> None:
             raise RuntimeError("Installed wheel did not complete the expected bounded demonstration")
         print(json.dumps({"version": version.strip(), "wheel": wheels[-1].name, "simulated": True,
                           "accepted_tasks": outcome["accepted_tasks"], "original_unchanged": True,
-                          "verified": True, "issue_cli": True, "desktop_cli": True, "model_calls": 0}))
+                          "verified": True, "issue_cli": True, "repository_cli": True,
+                          "desktop_cli": True, "model_calls": 0}))
 
 
 if __name__ == "__main__":

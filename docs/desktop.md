@@ -58,6 +58,13 @@ claiming work in a different checkout.
 
 ## Start an issue batch
 
+For ongoing intake, use the [repository workflow](repository.md) and
+`repository_create`, `repository_start`, `repository_status` and
+`repository_attention`. The same desktop phase tools can use `kind="repository"`;
+`kind="issues"` remains compatible with repository-backed issue state. Check the
+repository's observation/automatic mode before starting. An active host must
+continue claiming phases; the coordinator cannot wake the conversation.
+
 Copy [desktop-issues.json](../examples/desktop-issues.json) outside the target
 repository. Replace its project, GitHub repository, scope, and verification
 command. The repository needs a committed `HEAD`; fresh worktrees do not copy

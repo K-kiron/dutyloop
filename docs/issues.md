@@ -1,5 +1,9 @@
 # Process a GitHub issue backlog
 
+For incremental intake and continued PR follow-up, use
+[repository mode](repository.md). The commands below process a finite captured
+backlog; repository mode coordinates repeated passes with the same limits.
+
 Issue mode turns a finite snapshot of open GitHub issues into plans, isolated
 changes, and optionally pull requests and merged fixes. Items needing a decision
 remain visible while other eligible issues continue. It does not promise that
@@ -118,6 +122,14 @@ up to `queue.max_delivery_attempts`. Conflict, changed requirements, an unmatche
 merged tree, failed post-merge checks, or pending repository approvals can leave
 work unfinished. Deployment and production acceptance remain outside this flow.
 
+Owned-PR maintenance also works with `delivery: pull_request`. It does not grant
+merge or closure permission. `github.maintain_pull_requests` defaults to `true`.
+Trusted review feedback is reassessed against the original issue before repair;
+GitHub associations `OWNER`, `MEMBER`, `COLLABORATOR` and the explicit
+`github.review_authors` list identify trusted reviewers. Repeated inputs are
+deduplicated, and repairs use the same branch and PR. A finite run inspects
+available feedback; repository mode continues checking in subsequent passes.
+
 ## Decisions, dependencies, and interruptions
 
 Issues carrying an excluded label start as `needs_decision`. The planner also
@@ -135,9 +147,12 @@ dutyloop issues run --state ../issue-state
 
 `resolve` fetches and explicitly approves the latest issue content, records the
 snapshot change, and requeues a decision, failed, or dependency-waiting issue that
-has no accepted head or PR. Read the current issue and provide the missing intent
-before invoking it. It does not edit GitHub or renew the budget. An existing
-delivery requires inspection and reconciliation before a new batch. During
+needs replanning. Read the current issue and provide the missing intent before
+invoking it. An existing open owned PR keeps its branch, head, PR identity and
+attempt count after ownership and metadata checks. A partially published or
+uncertain delivery requires recovery first. Base drift still blocks subsequent
+implementation; a decision does not automatically rebase it. Resolving does not
+edit GitHub or renew the budget. During
 normal runs, changes to an issue's title, description, comments, or labels since
 capture require a decision rather than silently changing the accepted scope.
 
@@ -175,6 +190,8 @@ does not change an existing batch.
 | `github.close_issues` | `false` | Close only after verified merge delivery. |
 | `github.required_checks` | `[]` | Exact check/status names; mandatory and nonempty for merge. |
 | `github.merge_method` | `merge` | `merge`, `squash`, or `rebase`. |
+| `github.maintain_pull_requests` | `true` | Follow CI and trusted feedback on owned PRs, without widening merge permission. |
+| `github.review_authors` | `[]` | Additional exact GitHub reviewer logins trusted as feedback sources. |
 | `queue.numbers` | `[]` | Empty selects all captured open issues; otherwise select these open issue numbers. |
 | `queue.exclude_labels` | `["needs-decision", "needs-human"]` | Put matching issues aside for a decision. |
 | `queue.batch_size` | `10` | Maximum distinct issues implemented per run. |

@@ -302,3 +302,44 @@ def test_update_pull_request_rejects_invalid_metadata_before_dispatch(client, mo
     monkeypatch.setattr(github, "run_process", lambda *args, **kwargs: pytest.fail("Invalid PR update dispatched"))
     with pytest.raises(ValueError):
         client.update_pull_request(number, title, body)
+
+
+def test_pull_feedback_loads_review_inline_and_conversation_pages_read_only(client, monkeypatch):
+    def response(argv, options):
+        path = urlsplit(argv[-1]).path
+        page = int(parse_qs(urlsplit(argv[-1]).query)["page"][0])
+        author = {"user": {"login": "maintainer"}, "author_association": "MEMBER"}
+        if path.endswith("/reviews"):
+            if page == 1:
+                return [{"id": n, "body": f"Review {n}", "state": "COMMENTED", "commit_id": SHA,
+                         "submitted_at": "2026-11-10T01:00:00Z", **author} for n in range(1, 101)]
+            return [{"id": 101, "body": "Please handle the edge case", "state": "CHANGES_REQUESTED",
+                     "commit_id": SHA, "submitted_at": "2026-11-10T02:00:00Z", **author}]
+        if "/pulls/" in path:
+            return [{"id": 9, "body": "Inline detail", "commit_id": SHA, "path": "app.py", "line": 7,
+                     "updated_at": "2026-11-10T02:00:00Z", **author}]
+        return [{"id": 7, "body": "Conversation detail", "updated_at": "2026-11-10T03:00:00Z", **author}]
+
+    calls = install_runner(monkeypatch, response)
+    feedback = client.pull_request_feedback(12)
+    assert len(feedback) == 103
+    assert feedback[100]["kind"] == "review" and feedback[100]["state"] == "CHANGES_REQUESTED"
+    assert feedback[101]["kind"] == "inline" and feedback[101]["path"] == "app.py"
+    assert feedback[101]["line"] == 7
+    assert feedback[-1]["kind"] == "conversation" and feedback[-1]["commit_id"] is None
+    assert feedback[-1]["author"] == "maintainer"
+    assert all(argv[5] == "GET" and options["input_text"] == "" for argv, options in calls)
+    assert [urlsplit(argv[-1]).path for argv, _ in calls] == [
+        "repos/acme/project/pulls/12/reviews", "repos/acme/project/pulls/12/reviews",
+        "repos/acme/project/pulls/12/comments", "repos/acme/project/issues/12/comments"]
+
+
+@pytest.mark.parametrize("field,value", [("id", True), ("id", None), ("body", 1), ("user", None),
+                                        ("commit_id", "main"), ("state", "UNKNOWN")])
+def test_malformed_review_feedback_is_refused_before_partial_data(client, monkeypatch, field, value):
+    row = {"id": 1, "body": "Review", "state": "COMMENTED", "commit_id": SHA,
+           "submitted_at": "2026-11-10T01:00:00Z", "user": {"login": "maintainer"},
+           "author_association": "MEMBER", field: value}
+    install_runner(monkeypatch, lambda argv, options: [row])
+    with pytest.raises(GitHubError, match="feedback|pagination"):
+        client.pull_request_feedback(12)

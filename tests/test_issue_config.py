@@ -30,9 +30,43 @@ def test_issue_config_defaults_grant_no_publication_authority(issue_spec):
     assert normalized["github"]["delivery"] == "local"
     assert normalized["github"]["close_issues"] is False
     assert normalized["github"]["required_checks"] == []
+    assert normalized["github"]["maintain_pull_requests"] is True
+    assert normalized["github"]["review_authors"] == []
     assert normalized["queue"]["numbers"] == []
     assert normalized["queue"]["exclude_labels"] == ["needs-decision", "needs-human"]
     assert not state.exists()
+
+
+@pytest.mark.parametrize("value", ["true", 1, None])
+def test_pr_maintenance_requires_boolean_authority(issue_spec, value):
+    spec, state = issue_spec
+    spec["github"]["maintain_pull_requests"] = value
+    with pytest.raises(ValueError, match="maintain_pull_requests"):
+        validate_issue_spec(spec, state)
+
+
+@pytest.mark.parametrize("value", ["owner", ["-user"], ["user name"], [True], ["[bot]"], ["user[bot]extra"],
+                                  ["user[Bot]"], ["user[evil]"], ["-bot[bot]"], ["bot-[bot]"]])
+def test_review_authors_are_explicit_github_logins(issue_spec, value):
+    spec, state = issue_spec
+    spec["github"]["review_authors"] = value
+    with pytest.raises(ValueError, match="review_authors"):
+        validate_issue_spec(spec, state)
+
+
+def test_review_author_allowlist_is_case_insensitive_and_deduplicated(issue_spec):
+    spec, state = issue_spec
+    spec["github"].update(maintain_pull_requests=False, review_authors=["Maintainer", "maintainer", "outside-user"])
+    normalized = validate_issue_spec(spec, state)
+    assert normalized["github"]["maintain_pull_requests"] is False
+    assert normalized["github"]["review_authors"] == ["maintainer", "outside-user"]
+
+
+def test_review_author_allowlist_accepts_explicit_github_app_bot_logins(issue_spec):
+    spec, state = issue_spec
+    spec["github"]["review_authors"] = ["dependabot[bot]", "ChatGPT-Codex-Connector[bot]", "DEPENDABOT[bot]"]
+    normalized = validate_issue_spec(spec, state)
+    assert normalized["github"]["review_authors"] == ["dependabot[bot]", "chatgpt-codex-connector[bot]"]
 
 
 @pytest.mark.parametrize("section,field", [(None, "auto_publish"), ("github", "token"), ("queue", "auto_close")])

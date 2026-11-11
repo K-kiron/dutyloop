@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Keep repository intake and planning responsive while merge checks are pending;
+  retain finite issue-batch waiting. Classify clean read deadlines as limits,
+  preserve blocked unknown results across stop signals, and support explicitly
+  trusted GitHub App reviewer logins.
+
+- Add repository coordination with durable incremental issue intake, observation
+  and explicit automatic modes, task/attempt views, structured attention, and
+  CLI/MCP controls. Preserve budgets, stop latches and uncertain results across
+  passes and restarts; unchanged idle reconciliation makes no model call.
+- Maintain owned PRs through CI and trusted review feedback independently of
+  merge permission. Reassess feedback, deduplicate inputs, bound repair attempts,
+  and keep the existing branch and PR. Retained deliveries can resume after an
+  explicit operator decision and ownership checks.
+
 - Add a desktop driver that hands phases to the current local coding conversation
   through MCP, without launching a separate model CLI or selecting its model.
   Keep acceptance checks and delivery in the existing supervisor.

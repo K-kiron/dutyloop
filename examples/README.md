@@ -11,6 +11,7 @@ results on your project.
 | [issues.json](issues.json) | Plan and implement a captured GitHub issue backlog with Claude Code; delivery defaults to local. | Project, repository, scope, checks, and optional delivery policy. |
 | [desktop-issues.json](desktop-issues.json) | Process a captured issue backlog using the current local desktop coding conversation through MCP. | Project, repository, scope, and operator checks. |
 | [desktop-mission.json](desktop-mission.json) | Run a standing mission through desktop phase handoffs. | Project, scope, and operator checks. |
+| [repository.json](repository.json) | Incremental issue intake and owned-PR maintenance, starting in observation mode. | Project, repository, scope, checks, driver and delivery policy. |
 
 The documentation checker in the second example is a placeholder; DutyLoop
 does not supply a universal documentation oracle. Choose checks that test your
@@ -34,3 +35,7 @@ planning, decisions, persistent budgets, and opt-in GitHub delivery.
 
 Desktop examples use the current MCP host to perform phases; starting a runner
 does not wake an idle conversation. See [desktop setup](../docs/desktop.md).
+
+Repository mode uses `dutyloop repository` controls and preserves the same budget
+across reconciliation passes. See [repository maintenance](../docs/repository.md)
+before switching intake from observation to automatic execution.

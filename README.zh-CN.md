@@ -24,6 +24,7 @@
   <a href="#使用当前桌面-agent">桌面 agent</a> ·
   <a href="#运行项目任务">运行项目任务</a> ·
   <a href="#处理-github-issue">处理 issue</a> ·
+  <a href="#持续维护仓库">持续维护仓库</a> ·
   <a href="docs/getting-started.md">文档</a> ·
   <a href="https://github.com/K-kiron/dutyloop/issues/new/choose">报告问题</a>
 </p>
@@ -35,6 +36,10 @@ DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续�
 通过验收的改动会积累在**独立的本地 Git 分支**上，并保留任务依据、检查结果和复核记录。 每项任务通过后，DutyLoop 会继续发现工作，直到达到运行上限、遇到阻塞，或收到你的停止指令。
 
 已有待办 issue 时，可以使用 [issue 模式](#处理-github-issue)：捕获 GitHub 开放 issue，规划并实施可执行的工作，将需要你决定的事项单独保留。默认产出本地分支；也可以明确配置创建 PR、等待 CI 后合并，以及验收后关闭 issue。
+
+需要持续负责仓库时，使用[仓库维护模式](docs/repository.md)：增量接收新 issue，
+持续跟进已有 PR 的 CI 和评审，将需要人决定的事项集中显示。默认先观察和规划，
+检查后可明确开启自动实施；所有尝试共用原有预算。
 
 ## 工作流程
 
@@ -51,6 +56,7 @@ DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续�
 | 能力 | 带来的作用 |
 | --- | --- |
 | **持续发现工作** | 1–3 个发现 agent 检查当前证据，提出带有验收标准的候选任务。 |
+| **持续协调仓库** | 增量接收 issue、持久化输入记录、维护已有 PR，并集中显示待人工决定的事项。 |
 | **专注交付** | 实施和接纳保持串行，每次尝试使用受管理的 worktree。 |
 | **由你掌握的检查** | 将暂存文件还原为可运行的快照后执行你的命令；检查期间发生改动时，不予接纳。 |
 | **可审阅的结果** | 已接纳的提交、经检查的 Git 树 ID、任务反馈，以及保留的拒绝或中断记录。 |
@@ -165,6 +171,27 @@ dutyloop issues run --state ../issue-state
 
 [issue 工作流指南](docs/issues.md)介绍完整配置、后台运行、人工决定、中断恢复和交付边界。目前覆盖来自离线验证，尚未验证已认证的真实项目 issue 批次。
 
+## 持续维护仓库
+
+复制[仓库配置](examples/repository.json)到目标仓库之外，填写路径、GitHub 仓库、
+验收命令和执行器。默认采用观察模式和本地交付：
+
+```console
+dutyloop repository init --spec repository.json --state ../repository-state
+dutyloop repository run --state ../repository-state
+dutyloop repository status --state ../repository-state --human
+dutyloop repository attention --state ../repository-state
+```
+
+检查计划后，用 `repository set-mode --state ../repository-state --mode auto`
+明确开启实施，再用 `repository start --state ../repository-state` 后台运行。
+观察模式只规划已捕获任务，不实施改动；空闲且输入未变化时不调用模型。
+新任务、等待、重试和重启共用原有调用与时间额度。
+
+PR 维护与合并权限分别控制：`delivery: pull_request` 也可跟进 CI 和可信评审，
+重新规划并修复同一个 PR。范围变化和缺失的业务决定会留在人工待办中。
+桌面执行仍需活跃会话领取阶段任务。详见[持续维护指南](docs/repository.md)。
+
 ## 适合哪些工作
 
 | 持续职责 | 有用的输入 | 产出 |
@@ -182,7 +209,7 @@ DutyLoop 使用现有的宿主安装和认证。通过 `driver.name` 选择适�
 | 集成 | 适配方式 | 验证覆盖 |
 | --- | --- | --- |
 | **当前本地桌面 agent** | `driver.name: desktop`，通过 MCP 交接阶段 | 离线约定检查；实际 Codex/Claude 桌面执行尚未验证 |
-| **Codex CLI** | 原生结构化输出 | 离线协议测试，以及一次历史记录中的已认证小型测试项目运行 |
+| **Codex CLI** | 原生结构化输出 | 离线协议测试，以及有明确上限的已认证 mission 和仓库协调测试 |
 | **Claude Code CLI** | 原生结构化输出 | 离线协议测试 |
 | **OpenCode 2.2.5** | 固定版本的原生 JSON 事件 | 固定版本源码检查和离线协议测试 |
 | **DeepSeek Harness 0.2.2-rc.1** | 固定版本的原生无交互执行 | 固定版本源码检查和离线协议测试 |
@@ -226,6 +253,7 @@ issue 工作流已有离线队列和交付验证，尚无已认证的真实项�
 | [配置参考](docs/configuration.md) | 设置路径、检查、约束、驱动器和运行上限 |
 | [GitHub issue](docs/issues.md) | 规划待办、处理人工决定，配置 PR 与合并交付 |
 | [示例](examples/README.md) | 调整维护或文档任务配置 |
+| [持续维护仓库](docs/repository.md) | 增量接收 issue、维护已有 PR，并集中处理人工决定 |
 | [运行与排错](docs/operations.md) | 监控事件、停止工作和处理恢复 |
 | [适配协议](docs/adapter-protocol.md) | 编写宿主包装器或了解原生适配约定 |
 | [架构](docs/architecture.md) | 了解发现、接纳和状态持久化 |

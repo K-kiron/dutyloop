@@ -5,6 +5,56 @@ control-flow behavior, not long-term autonomous effectiveness or customer value.
 Raw mission state, account metadata, and host transcripts are kept private and
 are not included in this repository.
 
+## Repository coordination evidence on 2026-11-10
+
+Repository fixtures exercise incremental admission and observation, repeat-poll
+deduplication, source changes and explicit decisions, shared limits across
+passes, initialization interruption, coordinator ownership, source failures,
+and read-only desktop executor status. Owned-PR fixtures cover CI repairs in
+PR-only delivery, review/inline/conversation feedback, trusted-author rules,
+atomic repair scheduling, retained-PR decisions and unknown-result recovery.
+They use local Git repositories and simulated GitHub/model responses.
+
+The complete local Windows suite passed 553 tests and 48 subtests, with one
+skip, in 751.12 seconds. Six subsequent lifecycle-projection checks and 78
+CLI/MCP interface checks also passed. Ruff and source compilation passed. The
+CI job timeout was increased to allow the expanded real-Git regression suite
+and package checks on each supported platform; configured jobs are not evidence
+of a completed run.
+
+A separately labeled authenticated native Codex CLI 0.156.1 / `gpt-6-sol`
+fixture completed four calls in 283.76 seconds: issue planning, implementation,
+separate review, then planning an issue introduced after the first fix. The
+first issue was accepted locally after operator checks; the incremental issue
+needed a product rounding decision and remained `needs_decision`. The original
+checkout stayed unchanged, all call cleanup was confirmed, and an explicit stop
+ended the coordinator. GitHub intake was simulated and delivery stayed local;
+this does not establish authenticated PR repair or desktop execution. The run
+used the existing host login and no external API-key file. Host dollar cost was
+not reported and remains unknown.
+
+An earlier native planning call exposed conventional `file.py:line-range`
+evidence being rejected as a scope path. A focused regression reproduced the
+failure before correction. Citation resolution now keeps the same path guards
+and original evidence receipt; traversal and malformed ranges remain rejected.
+
+A separate authenticated GitHub CLI check initialized repository mode against
+`K-kiron/dutyloop` in observation/local delivery and reconciled it twice. It
+observed zero open issues, made zero model calls, and retained a stable receipt
+on the repeated unchanged poll. It made no GitHub writes. This establishes the
+actual empty-intake transport path, not live PR repair or backlog effectiveness.
+
+Source and wheel distributions built using the declared isolated build
+toolchain. A fresh installed wheel exposed the repository CLI and imported its
+coordinator outside the source checkout; its scripted demo accepted two fixes
+and preserved the original fixture checkout without model calls.
+
+Reproduce the focused offline checks with:
+
+```console
+python -m pytest -q tests/test_repository_workflow.py tests/test_repository_cli.py tests/test_repository_mcp.py tests/test_pr_maintenance.py tests/test_evidence_paths.py
+```
+
 ## Desktop integration evidence boundary
 
 On 2026-11-10, an offline fixture used the official MCP SDK over real stdio to

@@ -116,6 +116,16 @@ before invoking it.
 
 ## Desktop phase tools
 
+Repository maintenance uses `repository_create`, `repository_start`,
+`repository_status`, `repository_reconcile`, `repository_stop`,
+`repository_events`, `repository_recover`, `repository_resolve`,
+`repository_attention` and `repository_set_mode`. Creation and reconciliation do
+not invoke models or publish changes. `repository_set_mode(name, mode="auto")`
+explicitly authorizes incremental execution within the stored scope and delivery
+policy, without replenishing limits. The default mode is `observe`.
+See [repository maintenance](repository.md) before enabling it. Finite issue
+controls reject repository state so they cannot bypass observation policy.
+
 | Tool | Inputs | Effect |
 | --- | --- | --- |
 | `desktop_next` | `name`, `worker_id`, `context_id`, optional `kind` | Claim one pending phase. |
