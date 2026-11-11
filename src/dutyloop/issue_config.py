@@ -69,7 +69,8 @@ def validate_issue_spec(spec, state_dir):
         raise ValueError("github.maintain_pull_requests must be boolean")
     authors = github.get("review_authors", [])
     if not isinstance(authors, list) or any(
-            not isinstance(author, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", author)
+            not isinstance(author, str) or not re.fullmatch(
+                r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?", author)
             for author in authors):
         raise ValueError("github.review_authors must be GitHub logins")
     queue = spec.get("queue", {})

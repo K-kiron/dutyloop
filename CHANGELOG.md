@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep repository intake and planning responsive while merge checks are pending;
+  retain finite issue-batch waiting. Classify clean read deadlines as limits,
+  preserve blocked unknown results across stop signals, and support explicitly
+  trusted GitHub App reviewer logins.
+
 - Add repository coordination with durable incremental issue intake, observation
   and explicit automatic modes, task/attempt views, structured attention, and
   CLI/MCP controls. Preserve budgets, stop latches and uncertain results across

@@ -268,8 +268,12 @@ def run(state_dir, *, driver=None, github=None):
                     source_failures = 0
                 except GitHubError as error:
                     current = store.issues.control()
-                    if error.cancelled and error.cleanup_confirmed and (current["stop_requested"] or interrupted.is_set()):
-                        break
+                    if error.cleanup_confirmed and not error.outcome_unknown:
+                        if error.cancelled and (current["stop_requested"] or interrupted.is_set()):
+                            break
+                        if current["deadline"] is not None and time.time() >= current["deadline"]:
+                            store.issues.set_status("limited", "wall_time_limit")
+                            break
                     source_failures += 1
                     _source_error(store, error, source_failures)
                     # Retry only a confirmed-clean read timeout, at most twice;
@@ -295,7 +299,10 @@ def run(state_dir, *, driver=None, github=None):
                     break
         finally:
             if interrupted.is_set():
+                current = store.issues.control()
                 store.issues.stop()
+                if current["status"] == "blocked":
+                    store.issues.set_status("blocked", current["reason"])
             with store.issues.connection() as db:
                 metadata = store.metadata(db)
                 metadata["coordinator_pid"] = None

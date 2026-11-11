@@ -75,12 +75,21 @@ review feedback on its own PR without permission to merge or close the issue.
 The finite issue runner inspects available feedback during a pass; repository
 mode keeps checking in later passes.
 
+Pending merge checks yield back to the repository coordinator. Intake and
+planning can continue while one owned PR waits, while subsequent implementation
+still waits for its accepted merge base. Finite issue batches retain their
+existing wait-for-merge behavior.
+
 `github.maintain_pull_requests` defaults to `true`; set it to `false` to leave
 published PRs for the maintainer. Review authors with GitHub association `OWNER`,
 `MEMBER` or `COLLABORATOR`, or logins listed in `github.review_authors`, may provide
 feedback for read-only reassessment. That feedback supplies context, not wider
 authority. Ambiguity still requires an operator decision. Repairs retain the
 owned branch and PR and count towards `queue.max_delivery_attempts`.
+
+An explicitly configured reviewer can also be a GitHub App login such as
+`dependabot[bot]`. App bots receive no default trust; add the exact actor only
+when its feedback should be reassessed within the original issue scope.
 
 Merge and issue closure keep their separate [delivery gates](issues.md).
 Switching intake to `auto` grants neither permission. Repository mode does not
@@ -104,6 +113,10 @@ The original invocation and wall-time limits span every poll, attempt, restart
 and period offline. A stopped or exhausted coordinator cannot restart itself.
 Unknown external results remain quarantined: recovery reads remote state and
 requires acknowledgment; it does not blindly repeat a push, merge or closure.
+
+A confirmed-clean GitHub read cancelled at its wall deadline ends as
+`limited / wall_time_limit`. Unknown cleanup or outcomes remain blocked, even
+when a stop signal arrives; the stop is also retained.
 
 Repository metadata and intake receipts live in the same private
 `issues.sqlite3` as the issue queue. Keep state and raw host transcripts outside

@@ -649,7 +649,7 @@ class IssueRunner:
         self.store.update_issue(row["number"], "closed", reason=None)
         self.store.event("issue_closed", {"number": row["number"], "pr_number": row["pr_number"], "merge_sha": row["merge_sha"]})
 
-    def loop(self, plan_only=False):
+    def loop(self, plan_only=False, *, yield_pending=False):
         for row in self.store.snapshot()["issues"]:
             if self.stopped():
                 break
@@ -694,7 +694,7 @@ class IssueRunner:
             if progress:
                 continue
             pending = any(row["state"] in {"accepted", "pull_request", "merged"} for row in self.store.snapshot()["issues"])
-            if pending and self.spec["github"]["delivery"] == "merge":
+            if pending and self.spec["github"]["delivery"] == "merge" and not yield_pending:
                 until = time.monotonic() + min(self.spec["poll_seconds"], self.remaining())
                 while time.monotonic() < until and not self.stopped():
                     self.interrupted.wait(min(.1, until - time.monotonic()))
@@ -711,6 +711,7 @@ class IssueRunner:
 def run(state_dir, *, driver=None, github=None, plan_only=False):
     store = IssueStore(state_dir)
     interrupted = threading.Event()
+    yield_pending = False
     with runner_lock(store.directory):
         if (store.directory / "repository.initializing").exists():
             raise ValueError("Repository initialization is incomplete; inspect its retained state")
@@ -723,6 +724,8 @@ def run(state_dir, *, driver=None, github=None, plan_only=False):
                 if mode not in {"observe", "auto"}:
                     raise ValueError("Repository intake mode is missing or invalid")
                 plan_only = plan_only or mode == "observe"
+                # Reconcile new intake between pending merge polls in the outer coordinator.
+                yield_pending = True
         snapshot = store.snapshot()
         if snapshot["status"] in {"limited", "stopped", "blocked"} or snapshot["stop_requested"]:
             return snapshot
@@ -738,7 +741,7 @@ def run(state_dir, *, driver=None, github=None, plan_only=False):
                 handlers[sig] = signal.signal(sig, lambda *_: interrupted.set())
         try:
             with controlled_git(runner.stopped, runner.remaining, store.directory / "git-operations"):
-                runner.loop(plan_only)
+                runner.loop(plan_only, yield_pending=yield_pending)
         except GitHubError as error:
             if not (error.cancelled and error.cleanup_confirmed and not error.outcome_unknown and runner.stopped()):
                 store.set_status("blocked", "github_outcome_unknown" if error.outcome_unknown else "github_error")

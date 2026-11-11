@@ -45,7 +45,8 @@ def test_pr_maintenance_requires_boolean_authority(issue_spec, value):
         validate_issue_spec(spec, state)
 
 
-@pytest.mark.parametrize("value", ["owner", ["-user"], ["user name"], [True]])
+@pytest.mark.parametrize("value", ["owner", ["-user"], ["user name"], [True], ["[bot]"], ["user[bot]extra"],
+                                  ["user[Bot]"], ["user[evil]"], ["-bot[bot]"], ["bot-[bot]"]])
 def test_review_authors_are_explicit_github_logins(issue_spec, value):
     spec, state = issue_spec
     spec["github"]["review_authors"] = value
@@ -59,6 +60,13 @@ def test_review_author_allowlist_is_case_insensitive_and_deduplicated(issue_spec
     normalized = validate_issue_spec(spec, state)
     assert normalized["github"]["maintain_pull_requests"] is False
     assert normalized["github"]["review_authors"] == ["maintainer", "outside-user"]
+
+
+def test_review_author_allowlist_accepts_explicit_github_app_bot_logins(issue_spec):
+    spec, state = issue_spec
+    spec["github"]["review_authors"] = ["dependabot[bot]", "ChatGPT-Codex-Connector[bot]", "DEPENDABOT[bot]"]
+    normalized = validate_issue_spec(spec, state)
+    assert normalized["github"]["review_authors"] == ["dependabot[bot]", "chatgpt-codex-connector[bot]"]
 
 
 @pytest.mark.parametrize("section,field", [(None, "auto_publish"), ("github", "token"), ("queue", "auto_close")])

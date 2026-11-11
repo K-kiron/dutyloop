@@ -2,6 +2,7 @@
 
 import copy
 import json
+import signal
 import sqlite3
 import threading
 import time
@@ -318,6 +319,96 @@ def test_unknown_read_cleanup_blocks_without_retry(batch, monkeypatch):
         repository.run(state, driver=Host(), github=github)
     assert len(attempted) == 1
     assert repository.status(state)["status"] == "blocked"
+
+
+@pytest.mark.parametrize("failure", ["cancelled", "timed_out"])
+def test_expired_deadline_during_clean_intake_finishes_limited_without_source_error(batch, failure):
+    _, state, spec, github = batch
+    repository.initialize(spec, state, github=github)
+    store = IssueStore(state)
+
+    def deadline_during_read():
+        with store.connection() as db:
+            control = store._read(db)
+            control["deadline"] = time.time() - 1
+            store._save(db, control)
+        raise GitHubError("Read ended at its deadline", **{failure: True})
+
+    github.list_open_issues = deadline_during_read
+    host = Host()
+    result = repository.run(state, driver=host, github=github)
+    assert result["status"] == "limited"
+    assert result["reason"] == "wall_time_limit"
+    assert result["invocations"] == 0
+    assert not result["stop_requested"]
+    assert result["repository"].get("source_error") is None
+    assert result["repository"]["coordinator_pid"] is None
+    assert host.calls == []
+    assert not any(row["kind"] == "repository_source_error" for row in repository.events(state, limit=1000)["events"])
+
+
+@pytest.mark.parametrize("unknown", [{"cleanup_confirmed": False}, {"outcome_unknown": True}])
+def test_unknown_intake_cleanup_or_outcome_takes_precedence_over_expired_deadline(batch, unknown):
+    _, state, spec, github = batch
+    repository.initialize(spec, state, github=github)
+    store = IssueStore(state)
+
+    def deadline_during_unknown_read():
+        with store.connection() as db:
+            control = store._read(db)
+            control["deadline"] = time.time() - 1
+            store._save(db, control)
+        raise GitHubError("Read outcome or cleanup requires inspection", cancelled=True, **unknown)
+
+    github.list_open_issues = deadline_during_unknown_read
+    host = Host()
+    with pytest.raises(GitHubError):
+        repository.run(state, driver=host, github=github)
+    result = repository.status(state)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "worker_cleanup_unconfirmed"
+    assert result["repository"]["source_error"]["attempts"] == 1
+    assert result["invocations"] == 0
+    assert host.calls == []
+
+
+@pytest.fixture
+def recorded_signal_handlers(monkeypatch):
+    installed = {}
+    original = signal.signal
+
+    def record(signum, handler):
+        previous = original(signum, handler)
+        installed[signum] = handler
+        return previous
+
+    monkeypatch.setattr(repository.signal, "signal", record)
+    return installed
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize("unknown", [{"cleanup_confirmed": False}, {"outcome_unknown": True}])
+def test_signal_during_unknown_intake_latches_stop_and_preserves_blocked_reason(batch, recorded_signal_handlers, signum, unknown):
+    _, state, spec, github = batch
+    repository.initialize(spec, state, github=github)
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+
+    def interrupted_read():
+        # Invoke the captured handler directly; do not send a process OS signal.
+        recorded_signal_handlers[signum](signum, None)
+        raise GitHubError("Read cleanup or outcome remains unknown", cancelled=True, **unknown)
+
+    github.list_open_issues = interrupted_read
+    with pytest.raises(GitHubError):
+        repository.run(state, driver=Host(), github=github)
+    result = repository.status(state)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "worker_cleanup_unconfirmed"
+    assert result["stop_requested"] is True
+    assert result["repository"]["source_error"]["attempts"] == 1
+    assert result["repository"]["coordinator_pid"] is None
+    assert result["invocations"] == 0
+    assert {sig: signal.getsignal(sig) for sig in previous} == previous
 
 
 def test_stale_coordinator_record_is_not_an_unfinished_issue_and_is_audited_on_restart(batch, one_tick):

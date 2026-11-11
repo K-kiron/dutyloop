@@ -1,11 +1,12 @@
 """PR-only delivery keeps one owned PR current without granting merge authority."""
 
 import json
+import threading
 
 import pytest
 import test_issue_workflow as workflow
 
-from dutyloop import issues
+from dutyloop import issues, repository
 from dutyloop.drivers import DriverResult
 from dutyloop.issue_store import IssueStore
 from dutyloop.repository_store import RepositoryStore
@@ -94,9 +95,10 @@ def test_ambiguous_or_nonactionable_feedback_never_enters_implementation(batch, 
         assert resumed["invocations"] == result["invocations"]
 
 
-def test_untrusted_feedback_is_retained_without_model_or_branch_mutation(batch):
+@pytest.mark.parametrize("author", ["stranger", "dependabot[bot]"])
+def test_untrusted_feedback_is_retained_without_model_or_branch_mutation(batch, author):
     state, github, first = published(batch)
-    github.feedback = [feedback(association="NONE", author="stranger", head=first["head"])]
+    github.feedback = [feedback(association="NONE", author=author, head=first["head"])]
     host = FeedbackHost()
     result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["head"] == first["head"]
@@ -112,6 +114,20 @@ def test_explicit_review_author_is_eligible_for_reassessment(batch):
     result = issues.run(state, driver=host, github=github)
     assert len(host.assessments) == 1
     assert result["issues"][0]["state"] == "needs_decision"
+
+
+def test_explicit_bot_author_allowlist_permits_bounded_reassessment(batch):
+    actor = "chatgpt-codex-connector[bot]"
+    state, github, first = published(batch, review_authors=[actor])
+    before = issues.status(state)
+    github.feedback = [feedback(association="NONE", author=actor, head=first["head"])]
+    host = FeedbackHost("needs_decision")
+    result = issues.run(state, driver=host, github=github)
+    assert host.calls == ["discover"] and len(host.assessments) == 1
+    assert result["invocations"] == before["invocations"] + 1
+    assert result["issues"][0]["state"] == "needs_decision"
+    assert result["issues"][0]["head"] == first["head"]
+    assert github.writes == [("create", 100)]
 
 
 def test_maintenance_opt_out_leaves_ci_and_feedback_untouched(batch):
@@ -295,3 +311,74 @@ def test_issue_executor_refuses_incomplete_repository_initialization(batch):
     with pytest.raises(ValueError, match="initialization is incomplete"):
         issues.run(state, driver=host, github=github)
     assert host.calls == [] and not github.writes
+
+
+def pending_merge(batch, *, repository_agent):
+    _, state, spec, github = batch
+    github.issues = {1: workflow.source(1)}
+    spec["github"].update(delivery="merge", required_checks=["tests"])
+    github.check_results = [{"name": "tests", "status": "in_progress", "conclusion": None}]
+    if repository_agent:
+        repository.initialize({**spec, "intake": {"mode": "auto", "poll_seconds": .05}}, state, github=github)
+    else:
+        issues.initialize(spec, state, github=github)
+    store = IssueStore(state)
+    assert store.begin()
+    host = workflow.Host()
+    runner = issues.IssueRunner(store, host, threading.Event(), github)
+    runner.plan(runner.row(1))
+    runner.implement(runner.row(1))
+    runner.publish(runner.row(1))
+    store.set_status("ready", runner_pid=None)
+    return state, github, host
+
+
+def test_repository_pending_merge_yields_for_new_intake_and_planning(batch, monkeypatch):
+    state, github, host = pending_merge(batch, repository_agent=True)
+    original_init = issues.IssueRunner.__init__
+
+    def init_with_wait_guard(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+
+        def unexpected_inner_wait(timeout):
+            pytest.fail("Repository delivery must yield pending checks to the intake coordinator")
+
+        self.interrupted.wait = unexpected_inner_wait
+
+    monkeypatch.setattr(issues.IssueRunner, "__init__", init_with_wait_guard)
+    ticks = []
+
+    def coordinator_wait(store, interrupted, until):
+        ticks.append(store.snapshot())
+        if len(ticks) == 1:
+            github.issues[3] = workflow.source(3)
+            return False
+        issues.stop(state)
+        return True
+
+    monkeypatch.setattr(repository, "_wait", coordinator_wait)
+    result = repository.run(state, driver=host, github=github)
+    assert len(ticks) == 2
+    assert [row["state"] for row in result["issues"]] == ["pull_request", "planned"]
+    assert ticks[0]["status"] == "ready" and ticks[0]["reason"] == "pull_requests_pending"
+    assert host.calls == ["discover", "implement", "review", "discover"]
+    assert github.writes == [("create", 100)]
+    assert github.issues[1]["state"] == "open" and github.issues[3]["state"] == "open"
+
+
+def test_finite_issue_merge_delivery_keeps_waiting_for_pending_checks(batch, monkeypatch):
+    state, github, host = pending_merge(batch, repository_agent=False)
+    store = IssueStore(state)
+    assert store.begin()
+    interrupted = threading.Event()
+    waits = []
+
+    def stop_after_inner_wait(timeout):
+        waits.append(timeout)
+        interrupted.set()
+
+    monkeypatch.setattr(interrupted, "wait", stop_after_inner_wait)
+    runner = issues.IssueRunner(store, host, interrupted, github)
+    runner.loop()
+    assert waits and store.snapshot()["issues"][0]["state"] == "pull_request"
+    assert github.writes == [("create", 100)]
