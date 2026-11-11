@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dutyloop"
 version = "0.2.0"
-description = "Persistent project agents that discover, implement and verify work under explicit limits"
+description = "A local, persistent repository super-agent with explicit budgets and human control"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

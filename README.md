@@ -2,13 +2,14 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
-    <img src="docs/assets/hero-light.svg" alt="DutyLoop — an ongoing mission for your coding agent" width="1200">
+    <img src="docs/assets/hero-light.svg" alt="DutyLoop — a repository super-agent for your coding tools" width="1200">
   </picture>
 </p>
 
 <p align="center">
-  <strong>Give your coding agent a standing responsibility.</strong><br>
-  Discover useful work. Implement a change. Check it. Review it. Keep going.
+  <strong>A repository super-agent for your coding tools.</strong><br>
+  Continuously plan, implement, verify, and follow up on repository work<br>
+  with explicit budgets and human control.
 </p>
 
 <p align="center">
@@ -31,14 +32,14 @@
 
 ---
 
-DutyLoop is a local supervisor for coding agents with an ongoing job to do. Give it a repository, a mission, and your checks. It repeatedly inspects the project, selects work supported by evidence, and develops one change at a time.
+DutyLoop is a **local, persistent super-agent for repository development**, built around your existing coding tools. Give it a repository, a standing responsibility, and acceptance commands. It inspects the project, plans work supported by evidence, and coordinates implementation, verification, and separate review within your configured scope and limits.
 
 Accepted changes accumulate on a **separate local Git branch**, with task rationale, verification results, and review records. Discovery continues after each accepted task, until a limit, blocker, or your stop command ends the run.
 
 Already have a backlog? [Issue mode](#process-github-issues) captures open GitHub issues, plans and implements eligible work, and sets aside items needing your decision. Delivery defaults to local branches; you can explicitly enable PR creation, CI-gated merging, and verified issue closure.
 
 For ongoing ownership, [repository mode](#maintain-a-repository) reconciles new
-issues and keeps following owned PRs through CI and review. Begin in observation
+issues and keeps following PRs created by DutyLoop through CI and review. Begin in observation
 mode, inspect the plans and attention list, then explicitly enable execution
 within the same persistent budget.
 
@@ -51,6 +52,8 @@ within the same persistent budget.
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/workflow-light.svg">
   <img src="docs/assets/workflow-light.svg" alt="Discover evidenced work, implement in a worktree, run operator checks, request a separate review, then commit accepted work and discover again" width="1200">
 </picture>
+
+**A coordinated multi-agent workflow:** one to three discovery workers can inspect the project in parallel. Implementation, operator checks, and a separate review then run in sequence, one change at a time. After acceptance, discovery continues with the results preserved in durable state.
 
 You define the responsibility and acceptance commands once. DutyLoop manages the worktrees, phase reservations, staged-snapshot checks, review, and durable state. Use your current local desktop coding agent through MCP, or select a native coding CLI adapter.
 
@@ -246,7 +249,9 @@ project allowlist and desktop phase mailbox.
 
 **Alpha, with explicit operating boundaries.** Offline behavior tests, a scripted end-to-end demo, and the recorded host checks cover specific control contracts. Long-term usefulness and reduced maintainer effort still need real-project evaluation; comparative effectiveness has not been established.
 
-The issue workflow has offline queue and delivery coverage, without an authenticated real-project batch. Native Claude Code phases use fresh processes and available committed project instructions. The desktop driver passes phases to an existing conversation; actual desktop execution, review isolation, and installation-specific memory behavior remain unverified.
+Offline fixtures cover repository coordination and GitHub delivery. A bounded authenticated Codex CLI fixture accepted a local issue fix and planned an issue introduced afterward, using simulated GitHub input. Live GitHub PR repair, merging, and issue closure remain unverified; see the [verification record](docs/validation.md) for the exact scope.
+
+Native Claude Code phases use fresh processes and available committed project instructions. The desktop driver passes phases to an existing conversation; actual desktop execution, review isolation, and installation-specific memory behavior remain unverified.
 
 - **Limits:** invocations count outer driver calls, not each host request or
   subagent. Desktop invocations count phase handoffs; desktop model usage remains

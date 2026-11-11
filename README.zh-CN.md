@@ -2,13 +2,14 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
-    <img src="docs/assets/hero-light.svg" alt="DutyLoop — 交给开发 agent 一份持续职责" width="1200">
+    <img src="docs/assets/hero-light.svg" alt="DutyLoop — 面向仓库开发的 super-agent，协调你现有的编程工具" width="1200">
   </picture>
 </p>
 
 <p align="center">
-  <strong>交给开发 agent 一份持续负责的工作。</strong><br>
-  发现工作 · 实施 · 验证 · 复核 · 持续迭代
+  <strong>面向仓库开发的 super-agent，协调你现有的编程工具。</strong><br>
+  持续规划、实现、验证并跟进仓库任务<br>
+  运行预算明确，关键决定由你掌握。
 </p>
 
 <p align="center">
@@ -31,14 +32,14 @@
 
 ---
 
-DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续职责工作。 给它一个仓库、一份职责说明和验收命令，它就会反复检查项目，选择有证据支持的工作，逐项实施改动。
+DutyLoop 是基于现有编程工具的**本地、持久化仓库开发 super-agent**。给它一个仓库、一份持续职责和验收命令，它会检查项目，规划有证据支持的工作，并在你设定的范围和运行上限内，协调实施、验证和单独复核。
 
 通过验收的改动会积累在**独立的本地 Git 分支**上，并保留任务依据、检查结果和复核记录。 每项任务通过后，DutyLoop 会继续发现工作，直到达到运行上限、遇到阻塞，或收到你的停止指令。
 
 已有待办 issue 时，可以使用 [issue 模式](#处理-github-issue)：捕获 GitHub 开放 issue，规划并实施可执行的工作，将需要你决定的事项单独保留。默认产出本地分支；也可以明确配置创建 PR、等待 CI 后合并，以及验收后关闭 issue。
 
 需要持续负责仓库时，使用[仓库维护模式](docs/repository.md)：增量接收新 issue，
-持续跟进已有 PR 的 CI 和评审，将需要人决定的事项集中显示。默认先观察和规划，
+持续跟进由 DutyLoop 创建的 PR 的 CI 和评审，将需要人决定的事项集中显示。默认先观察和规划，
 检查后可明确开启自动实施；所有尝试共用原有预算。
 
 ## 工作流程
@@ -51,12 +52,14 @@ DutyLoop 是面向开发 agent 的本地编排工具，让它围绕一份持续�
   <img src="docs/assets/workflow-light.svg" alt="发现有证据支持的工作，在 worktree 中实施，运行操作者指定的检查，单独调用复核，再提交通过验收的改动并继续发现工作" width="1200">
 </picture>
 
+**按阶段协调多个 agent：**1–3 个发现 agent 可以并行检查项目；实施、操作者指定的检查和单独复核随后依次进行，每次推进一项改动。验收通过后，结果保存在持久状态中，并继续发现下一项工作。
+
 你一次性定义职责和验收命令。DutyLoop 管理 worktree、阶段额度预留、暂存快照检查、复核和持久状态。可以通过 MCP 使用当前本地桌面开发 agent，也可以选择原生开发 CLI 适配器。
 
 | 能力 | 带来的作用 |
 | --- | --- |
 | **持续发现工作** | 1–3 个发现 agent 检查当前证据，提出带有验收标准的候选任务。 |
-| **持续协调仓库** | 增量接收 issue、持久化输入记录、维护已有 PR，并集中显示待人工决定的事项。 |
+| **持续协调仓库** | 增量接收 issue、持久化输入记录、维护由 DutyLoop 创建的 PR，并集中显示待人工决定的事项。 |
 | **专注交付** | 实施和接纳保持串行，每次尝试使用受管理的 worktree。 |
 | **由你掌握的检查** | 将暂存文件还原为可运行的快照后执行你的命令；检查期间发生改动时，不予接纳。 |
 | **可审阅的结果** | 已接纳的提交、经检查的 Git 树 ID、任务反馈，以及保留的拒绝或中断记录。 |
@@ -234,7 +237,9 @@ dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 
 **Alpha 阶段，运行边界明确。**离线行为测试、脚本端到端演示和已记录的宿主检查， 覆盖了特定的控制约定。长期有效性和维护者工作量的改善仍需在真实项目中评估； 尚无对照结果证明其效果优于其他方案。
 
-issue 工作流已有离线队列和交付验证，尚无已认证的真实项目批次记录。原生 Claude Code 适配器的各阶段使用新进程，可读取已提交的项目指令。桌面驱动器将阶段交给当前对话；实际桌面执行、复核隔离及特定安装环境的记忆行为仍未验证。
+离线测试覆盖了仓库协调与 GitHub 交付。一项有明确上限的已认证 Codex CLI 测试，完成了本地 issue 修复，并规划了随后引入的 issue；其中 GitHub 输入由模拟提供。真实 GitHub PR 修复、合并和 issue 关闭仍未完成端到端验证，具体范围见[验证记录](docs/validation.md)。
+
+原生 Claude Code 适配器的各阶段使用新进程，可读取已提交的项目指令。桌面驱动器将阶段交给当前对话；实际桌面执行、复核隔离及特定安装环境的记忆行为仍未验证。
 
 - **运行上限：**调用次数统计外层驱动器调用，不逐一统计宿主请求或子 agent。
   桌面模式统计阶段交接，模型用量保持未知。时间上限包括首次运行后的等待和离线时间。
@@ -253,7 +258,7 @@ issue 工作流已有离线队列和交付验证，尚无已认证的真实项�
 | [配置参考](docs/configuration.md) | 设置路径、检查、约束、驱动器和运行上限 |
 | [GitHub issue](docs/issues.md) | 规划待办、处理人工决定，配置 PR 与合并交付 |
 | [示例](examples/README.md) | 调整维护或文档任务配置 |
-| [持续维护仓库](docs/repository.md) | 增量接收 issue、维护已有 PR，并集中处理人工决定 |
+| [持续维护仓库](docs/repository.md) | 增量接收 issue、维护由 DutyLoop 创建的 PR，并集中处理人工决定 |
 | [运行与排错](docs/operations.md) | 监控事件、停止工作和处理恢复 |
 | [适配协议](docs/adapter-protocol.md) | 编写宿主包装器或了解原生适配约定 |
 | [架构](docs/architecture.md) | 了解发现、接纳和状态持久化 |
