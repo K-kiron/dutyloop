@@ -1,5 +1,11 @@
 # Operations and troubleshooting
 
+For ongoing GitHub intake, owned-PR feedback and a consolidated attention list,
+use the [repository controls](repository.md). They retain the issue engine's
+budget and recovery rules and add persistent intake receipts. Use `repository
+attention` to inspect decisions and executor problems, and `repository resolve`
+to supply missing intent. Observation mode does not implement planned work.
+
 ## Commands and output
 
 | Command | Effect |

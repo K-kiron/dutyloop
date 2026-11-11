@@ -16,6 +16,11 @@ ISSUE_PLAN_SCHEMA = _object({
                    "items": DISCOVERY_SCHEMA["properties"]["candidates"]["items"]},
 })
 
+PR_FEEDBACK_SCHEMA = _object({
+    "status": {"type": "string", "enum": ["work", "no_work", "needs_decision"]},
+    "summary": {"type": "string", "minLength": 1},
+})
+
 
 def branch_name(value):
     if (not isinstance(value, str) or not value or value.startswith("-")
@@ -35,7 +40,7 @@ def validate_issue_spec(spec, state_dir):
         raise ValueError("Issue branches are allocated per issue; omit branch")
     github = spec.get("github")
     _unknown(github, {"repository", "remote", "base_branch", "delivery", "close_issues",
-                      "required_checks", "merge_method"}, "github")
+                      "required_checks", "merge_method", "maintain_pull_requests", "review_authors"}, "github")
     repository = github.get("repository")
     if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("github.repository must be owner/name")
@@ -59,6 +64,14 @@ def validate_issue_spec(spec, state_dir):
     method = github.get("merge_method", "merge")
     if method not in {"merge", "squash", "rebase"}:
         raise ValueError("Invalid merge_method")
+    maintain = github.get("maintain_pull_requests", True)
+    if type(maintain) is not bool:
+        raise ValueError("github.maintain_pull_requests must be boolean")
+    authors = github.get("review_authors", [])
+    if not isinstance(authors, list) or any(
+            not isinstance(author, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", author)
+            for author in authors):
+        raise ValueError("github.review_authors must be GitHub logins")
     queue = spec.get("queue", {})
     _unknown(queue, {"numbers", "exclude_labels", "batch_size", "max_issues", "max_delivery_attempts"}, "queue")
     numbers = queue.get("numbers", [])
@@ -69,7 +82,9 @@ def validate_issue_spec(spec, state_dir):
         raise ValueError("exclude_labels must be label names")
     normalized["github"] = {"repository": repository, "remote": remote, "base_branch": base,
                             "delivery": delivery, "close_issues": close,
-                            "required_checks": list(dict.fromkeys(checks)), "merge_method": method}
+                            "required_checks": list(dict.fromkeys(checks)), "merge_method": method,
+                            "maintain_pull_requests": maintain,
+                            "review_authors": list(dict.fromkeys(author.casefold() for author in authors))}
     normalized["queue"] = {
         "numbers": numbers, "exclude_labels": labels,
         "batch_size": _number(queue.get("batch_size", 10), "batch_size", 1, True),

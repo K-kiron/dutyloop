@@ -223,6 +223,41 @@ class GitHub:
     def pull_request(self, number):
         return _object(self._request("GET", f"/pulls/{_number(number)}"))
 
+    def pull_request_feedback(self, number):
+        """Read complete review, inline and conversation feedback without replying."""
+        number = _number(number)
+        feedback = []
+        for kind, endpoint in (("review", f"/pulls/{number}/reviews"),
+                               ("inline", f"/pulls/{number}/comments"),
+                               ("conversation", f"/issues/{number}/comments")):
+            for row in self._pages(endpoint):
+                user = row.get("user")
+                identity, body = row.get("id"), row.get("body")
+                state = row.get("state") if kind == "review" else None
+                updated = row.get("updated_at") or row.get("submitted_at")
+                association = row.get("author_association")
+                commit = row.get("commit_id") if kind != "conversation" else None
+                if (type(identity) is not int or identity < 1 or not isinstance(body, str)
+                        or not isinstance(user, dict) or not isinstance(user.get("login"), str)
+                        or not user["login"] or not isinstance(association, str)
+                        or updated is not None and not isinstance(updated, str)
+                        or kind == "review" and state not in {
+                            "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"}):
+                    raise GitHubError("GitHub returned invalid pull request feedback")
+                if commit is not None:
+                    try:
+                        commit = _sha(commit)
+                    except ValueError:
+                        raise GitHubError("GitHub returned invalid pull request feedback commit") from None
+                if kind == "inline" and (not isinstance(row.get("path"), str)
+                        or row.get("line") is not None and type(row["line"]) is not int):
+                    raise GitHubError("GitHub returned invalid inline feedback location")
+                feedback.append({"kind": kind, "id": identity, "body": body, "state": state,
+                                 "author": user["login"], "author_association": association,
+                                 "updated_at": updated, "commit_id": commit,
+                                 **({"path": row["path"], "line": row.get("line")} if kind == "inline" else {})})
+        return feedback
+
     def find_pull_request(self, head, base):
         head, base = _branch(head), _branch(base)
         pulls = self._pages("/pulls", params={"state": "all", "head": f"{self.owner}:{head}", "base": base})

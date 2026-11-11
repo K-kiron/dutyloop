@@ -14,6 +14,7 @@ from dutyloop import engine, issues
 from dutyloop.drivers import DriverResult
 from dutyloop.github import GitHubError
 from dutyloop.issue_store import IssueStore
+from dutyloop.store import Store
 from dutyloop.workspace import git
 
 
@@ -31,6 +32,7 @@ class FakeGitHub:
         self.check_results = [{"name": "tests", "status": "completed", "conclusion": "success"}]
         self.protected = True
         self.fail_close_after_effect = False
+        self.feedback = []
 
     def repository(self):
         return {"full_name": "example/project", "default_branch": "main"}
@@ -71,6 +73,9 @@ class FakeGitHub:
 
     def checks(self, head):
         return copy.deepcopy(self.check_results)
+
+    def pull_request_feedback(self, number):
+        return copy.deepcopy(self.feedback)
 
     def protection(self, branch):
         return {"enforce_admins": {"enabled": self.protected},
@@ -417,6 +422,9 @@ def test_cleanup_unknown_during_planning_preserves_safety_block(batch):
     assert result["reason"] == "worker_cleanup_unconfirmed"
     assert not result["stop_requested"]
     assert result["calls"][0]["state"] == "unknown"
+    child = Store(result["issues"][0]["child_state"]).snapshot()
+    assert child["status"] == "blocked" and child["reason"] == "worker_cleanup_unconfirmed"
+    assert child["runner_pid"] is None
 
 
 def test_one_call_planning_limit_is_not_mislabeled_as_operator_stop(batch):

@@ -180,7 +180,14 @@ class Supervisor:
                     raise ValueError("External evidence domain is not authorized")
                 receipts.append({"source": source, "sha256": None, "verified": False})
             else:
-                target = plain_path(cwd / relative_path(source))
+                # A native planner may include a conventional line citation.
+                # Resolve only its file portion through the same path guards;
+                # preserve the original citation in the evidence receipt.
+                citation = re.fullmatch(r"(.+):([1-9][0-9]*)(?:-([1-9][0-9]*))?", source)
+                if citation and citation[3] and int(citation[3]) < int(citation[2]):
+                    raise ValueError("Evidence line range must be ascending")
+                filename = citation[1] if citation else source
+                target = plain_path(cwd / relative_path(filename))
                 if not target.is_file() or cwd not in target.parents:
                     raise ValueError("Evidence source must be an existing project file")
                 receipts.append({"source": source, "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "verified": False})

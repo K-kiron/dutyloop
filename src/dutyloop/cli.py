@@ -30,18 +30,52 @@ def _reject_link(path: Path) -> None:
         raise ValueError(f"Symlinks and reparse points are not allowed: {path}")
 
 
-def start_background(state_dir: Path, *, issue_batch=False, plan_only=False) -> dict:
+def _unambiguous_state(state_dir: Path) -> None:
+    if (state_dir / "mission.sqlite3").exists() and (state_dir / "issues.sqlite3").exists():
+        raise ValueError("Ambiguous state contains both mission and issue databases; inspect it before continuing")
+
+
+def _mission_state(state_dir: Path) -> None:
+    _unambiguous_state(state_dir)
+    if (state_dir / "issues.sqlite3").exists():
+        raise ValueError("This state belongs to an issue batch or repository; use its corresponding commands.")
+
+
+def _repository_state(state_dir: Path) -> None:
+    _unambiguous_state(state_dir)
+    if (state_dir / "mission.sqlite3").exists():
+        raise ValueError("This state belongs to a mission; use mission commands.")
+
+
+def _finite_issue_state(state_dir: Path) -> None:
+    from . import repository
+
+    _repository_state(state_dir)
+    if repository.is_repository(state_dir):
+        raise ValueError("Repository maintenance state requires repository commands, not finite issue commands.")
+
+
+def start_background(state_dir: Path, *, issue_batch=False, plan_only=False, repository=False) -> dict:
     """Launch a runner without waiting; the engine enforces exclusive ownership."""
     state_dir = Path(state_dir).expanduser().absolute()
     for path in (state_dir, *state_dir.parents):
         _reject_link(path)
     state_dir = state_dir.resolve()
-    if plan_only and not issue_batch:
+    _unambiguous_state(state_dir)
+    if repository and issue_batch:
+        raise ValueError("Select either repository maintenance or a finite issue batch.")
+    if plan_only and (not issue_batch or repository):
         raise ValueError("plan_only requires an issue batch")
-    if issue_batch:
+    if repository:
+        from . import repository as repository_module
+        _repository_state(state_dir)
+        snapshot = repository_module.status(state_dir)
+    elif issue_batch:
         from . import issues
+        _finite_issue_state(state_dir)
         snapshot = issues.status(state_dir)
     else:
+        _mission_state(state_dir)
         snapshot = _engine().status(state_dir)
     if snapshot.get("status") in {"stopped", "limited", "blocked"} or snapshot.get("stop_requested"):
         raise ValueError("This mission cannot restart after stopping, reaching a limit, or becoming blocked.")
@@ -61,7 +95,7 @@ def start_background(state_dir: Path, *, issue_batch=False, plan_only=False) -> 
         options["start_new_session"] = True
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         process = subprocess.Popen(
-            [sys.executable, "-m", "dutyloop", *(["issues"] if issue_batch else []), "run", "--state", str(state_dir),
+            [sys.executable, "-m", "dutyloop", *(["repository"] if repository else ["issues"] if issue_batch else []), "run", "--state", str(state_dir),
              *(["--plan-only"] if plan_only else [])],
             stdout=stdout,
             stderr=stderr,
@@ -89,6 +123,25 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dutyloop", description=__doc__)
     parser.add_argument("--version", action="version", version=f"DutyLoop {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+    maintenance = commands.add_parser("repository", help="Continuously observe and maintain an authorized repository")
+    repository_commands = maintenance.add_subparsers(dest="repository_command", required=True)
+    for name in ("init", "reconcile", "run", "start", "status", "stop", "events", "recover", "resolve", "attention", "set-mode"):
+        item = repository_commands.add_parser(name)
+        item.add_argument("--state", type=Path, required=True)
+        if name == "init":
+            item.add_argument("--spec", type=Path, required=True)
+        if name == "status":
+            item.add_argument("--human", action="store_true")
+        if name == "events":
+            item.add_argument("--after", type=int, default=0)
+            item.add_argument("--limit", type=int, default=20)
+        if name == "recover":
+            item.add_argument("--acknowledge", action="store_true")
+        if name == "resolve":
+            item.add_argument("--number", type=int, required=True)
+            item.add_argument("--decision", required=True)
+        if name == "set-mode":
+            item.add_argument("--mode", choices=("observe", "auto"), required=True)
     backlog = commands.add_parser("issues", help="Plan and process a finite GitHub issue backlog")
     issue_commands = backlog.add_subparsers(dest="issue_command", required=True)
     for name in ("init", "run", "start", "status", "stop", "events", "recover", "resolve"):
@@ -159,9 +212,33 @@ def _parser() -> argparse.ArgumentParser:
 
 def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
     command = arguments.command
+    if command == "repository":
+        from . import repository
+        _repository_state(arguments.state)
+        action = arguments.repository_command
+        if action == "init":
+            from .onboarding import read_spec
+            return repository.initialize(read_spec(arguments.spec), arguments.state)
+        if action == "start":
+            return start_background(arguments.state, repository=True)
+        if action == "events":
+            return repository.events(arguments.state, after_id=arguments.after, limit=arguments.limit)
+        if action == "recover":
+            return repository.recover(arguments.state, acknowledge=arguments.acknowledge)
+        if action == "resolve":
+            return repository.resolve(arguments.state, arguments.number, arguments.decision)
+        if action == "set-mode":
+            return repository.set_mode(arguments.state, arguments.mode)
+        if action in {"status", "attention"}:
+            snapshot = repository.status(arguments.state)
+            if action == "attention":
+                return {"attention": snapshot.get("attention", [])}
+            return _repository_human_status(snapshot) if arguments.human else snapshot
+        return getattr(repository, action)(arguments.state)
     if command == "issues":
         from . import issues
         action = arguments.issue_command
+        _finite_issue_state(arguments.state)
         if action == "init":
             from .onboarding import read_spec
             return issues.initialize(read_spec(arguments.spec), arguments.state)
@@ -193,6 +270,8 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
             return issues.resolve(arguments.state, arguments.number, arguments.decision)
     if command in {"configure", "validate", "init"}:
         from .onboarding import read_spec, validation_report, write_configuration
+    if command in {"init", "run", "start", "status", "events", "stop", "recover"}:
+        _mission_state(arguments.state)
     if command == "configure":
         return write_configuration(project=arguments.project, output=arguments.output, mission=arguments.mission,
                                    allowed_paths=arguments.allow_path, verification=arguments.verify_json,
@@ -232,6 +311,35 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
         from .mcp_server import desktop_configuration
         return desktop_configuration(arguments.client, arguments.root, arguments.allow_project)
     raise ValueError(f"Unknown command: {command}")
+
+
+def _repository_human_status(snapshot: dict) -> str:
+    spec = snapshot["spec"]
+    executor = snapshot.get("executor", {})
+    mode = executor.get("mode", spec.get("driver", {}).get("name", "unknown"))
+    execution = mode + (f" [{executor['status']}]" if executor.get("status") else "")
+    lines = [f"DutyLoop repository: {snapshot['status']}",
+             f"Repository: {spec['github']['repository']}",
+             f"Intake: {snapshot.get('intake', spec.get('intake', {})).get('mode', 'observe')}",
+             f"Delivery: {spec['github']['delivery']}",
+             f"Executor: {execution}",
+             f"Calls: {snapshot['invocations']}/{spec['limits']['max_invocations']}"]
+    if executor.get("host_driven"):
+        lines.append("Desktop execution requires an active connected host; DutyLoop cannot wake it or stop its external tools.")
+    if snapshot.get("reason"):
+        lines.append(f"Reason: {snapshot['reason']}")
+    attention = snapshot.get("attention", [])
+    lines.append(f"Attention: {len(attention)}")
+    for item in attention:
+        identity = (f"#{item['issue_number']} " if item.get("issue_number") else
+                    f"PR #{item['pr_number']} " if item.get("pr_number") else "")
+        detail = item.get("required_action") or item.get("reason") or item.get("type", "Inspect state")
+        if item.get("reason") and item["reason"] != detail:
+            detail += f" — {item['reason']}"
+        lines.append(f"{identity}{detail}")
+    lines.extend(f"#{row['number']} [{row['state']}] {row['source']['title']}"
+                 + (f" — {row['reason']}" if row.get("reason") else "") for row in snapshot.get("issues", []))
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:

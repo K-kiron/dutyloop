@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .cli import _reject_link, error_payload, start_background
+from .cli import _finite_issue_state, _mission_state, _reject_link, error_payload, start_background
 from .drivers import NATIVE_DRIVERS
 from .store import runner_lock
 
@@ -61,6 +61,7 @@ class ControlPlane:
 
     def _authorized_snapshot(self, state: Path) -> dict:
         self._unambiguous(state)
+        _mission_state(state)
         snapshot = _engine().status(state)
         project = snapshot.get("project")
         if not isinstance(project, str) or _safe_path(project) not in self.projects:
@@ -140,6 +141,7 @@ class ControlPlane:
     def _issues_snapshot(self, state: Path) -> dict:
         from . import issues
         self._unambiguous(state)
+        _finite_issue_state(state)
         snapshot = issues.status(state)
         spec = snapshot["spec"]
         if _safe_path(spec["project"]) not in self.projects:
@@ -165,7 +167,83 @@ class ControlPlane:
         with runner_lock(state):
             if (state / "mission.sqlite3").exists():
                 raise ValueError("This name already belongs to a mission")
+            _finite_issue_state(state)
             return issues.initialize(supplied, state)
+
+    def _repository_snapshot(self, state: Path) -> dict:
+        from . import repository
+        self._unambiguous(state)
+        snapshot = repository.status(state)
+        spec = snapshot["spec"]
+        if _safe_path(spec["project"]) not in self.projects:
+            raise ValueError("The stored repository project must exactly match a registered allowlist root.")
+        if not self._native_driver(spec["driver"]) and spec["driver"] != {"name": "desktop"}:
+            raise ValueError("MCP accepts native drivers or desktop, not custom commands.")
+        return snapshot
+
+    def repository_create(self, name: str, spec: dict) -> dict:
+        """Initialize observation without launching models or publishing GitHub changes."""
+        from . import repository
+        if not isinstance(spec, dict):
+            raise ValueError("Repository spec must be an object")
+        supplied = copy.deepcopy(spec)
+        supplied.setdefault("driver", {"name": "desktop"})
+        state = self._state(name)
+        supplied = self._project_spec(supplied)
+        state.mkdir(parents=True, exist_ok=True)
+        with runner_lock(state):
+            if (state / "mission.sqlite3").exists() or (state / "issues.sqlite3").exists():
+                raise ValueError("This name already belongs to an initialized mission, issue batch, or repository")
+            return repository.initialize(supplied, state)
+
+    def repository_start(self, name: str) -> dict:
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return start_background(state, repository=True)
+
+    def repository_status(self, name: str) -> dict:
+        return self._repository_snapshot(self._state(name))
+
+    def repository_reconcile(self, name: str) -> dict:
+        """Refresh GitHub observations using GET and local state only."""
+        from . import repository
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return repository.reconcile(state)
+
+    def repository_stop(self, name: str) -> dict:
+        from . import repository
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return repository.stop(state)
+
+    def repository_events(self, name: str, after: int = 0, limit: int = 20) -> dict:
+        from . import repository
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return repository.events(state, after_id=after, limit=limit)
+
+    def repository_recover(self, name: str, acknowledge: bool = False) -> dict:
+        from . import repository
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return repository.recover(state, acknowledge=acknowledge)
+
+    def repository_resolve(self, name: str, number: int, decision: str) -> dict:
+        from . import repository
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return repository.resolve(state, number, decision)
+
+    def repository_attention(self, name: str) -> dict:
+        snapshot = self.repository_status(name)
+        return {"attention": snapshot.get("attention", [])}
+
+    def repository_set_mode(self, name: str, mode: str) -> dict:
+        from . import repository
+        state = self._state(name)
+        self._repository_snapshot(state)
+        return repository.set_mode(state, mode)
 
     def issues_start(self, name: str, plan_only: bool = False) -> dict:
         state = self._state(name)
@@ -204,11 +282,15 @@ class ControlPlane:
     def _desktop_state(self, name: str, kind: str):
         state = self._state(name)
         if kind == "issues":
-            snapshot = self._issues_snapshot(state)
+            from . import repository
+            self._unambiguous(state)
+            snapshot = self._repository_snapshot(state) if repository.is_repository(state) else self._issues_snapshot(state)
+        elif kind == "repository":
+            snapshot = self._repository_snapshot(state)
         elif kind == "mission":
             snapshot = self._authorized_snapshot(state)
         else:
-            raise ValueError("kind must be issues or mission")
+            raise ValueError("kind must be issues, repository or mission")
         spec = snapshot.get("spec", snapshot)
         if spec["driver"] != {"name": "desktop"}:
             raise ValueError("Desktop work tools require driver.name=desktop")
@@ -338,6 +420,56 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
     def issues_resolve(name: str, number: int, decision: str) -> dict:
         """Record an operator decision for replanning without resetting limits or publishing."""
         return _tool_result(lambda: controller.issues_resolve(name, number, decision))
+
+    @server.tool()
+    def repository_create(name: str, spec: dict[str, Any]) -> dict:
+        """Create ongoing repository observation with read-only GitHub access; default to desktop execution and observe intake. Creation does not launch models or publish. Projects must exactly match the allowlist; custom commands are forbidden."""
+        return _tool_result(lambda: controller.repository_create(name, spec))
+
+    @server.tool()
+    def repository_start(name: str) -> dict:
+        """Start the repository coordinator in the background. Native execution uses configured limits; desktop execution needs an active connected host and cannot wake it."""
+        return _tool_result(lambda: controller.repository_start(name))
+
+    @server.tool()
+    def repository_status(name: str) -> dict:
+        """Read repository sources, task attempts, attention, receipts and executor capability without starting or reconciling work."""
+        return _tool_result(lambda: controller.repository_status(name))
+
+    @server.tool()
+    def repository_reconcile(name: str) -> dict:
+        """Refresh repository observations using GitHub GET requests and local state only; never launch a model or publish GitHub changes."""
+        return _tool_result(lambda: controller.repository_reconcile(name))
+
+    @server.tool()
+    def repository_stop(name: str) -> dict:
+        """Stop future repository dispatch without resetting limits. Desktop hosts must separately stop their external tools and subagents."""
+        return _tool_result(lambda: controller.repository_stop(name))
+
+    @server.tool()
+    def repository_events(name: str, after: int = 0, limit: int = 20) -> dict:
+        """Read ordered repository audit events after a durable cursor without starting or reconciling work."""
+        return _tool_result(lambda: controller.repository_events(name, after, limit))
+
+    @server.tool()
+    def repository_recover(name: str, acknowledge: bool = False) -> dict:
+        """Inspect retained repository work; acknowledgement requires the operator to stop orphaned tools first and never resets limits or stop authority."""
+        return _tool_result(lambda: controller.repository_recover(name, acknowledge))
+
+    @server.tool()
+    def repository_resolve(name: str, number: int, decision: str) -> dict:
+        """Record an operator decision for repository work without resetting limits or publishing."""
+        return _tool_result(lambda: controller.repository_resolve(name, number, decision))
+
+    @server.tool()
+    def repository_attention(name: str) -> dict:
+        """Read the structured repository attention list without reconciling or changing work."""
+        return _tool_result(lambda: controller.repository_attention(name))
+
+    @server.tool()
+    def repository_set_mode(name: str, mode: str) -> dict:
+        """Persist and audit observe or auto intake authority without resetting limits or a stop request. Auto permits eligible repository execution on subsequent runs."""
+        return _tool_result(lambda: controller.repository_set_mode(name, mode))
 
     @server.tool()
     def desktop_next(name: str, worker_id: str, context_id: str, kind: str = "issues") -> dict:

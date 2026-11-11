@@ -4,6 +4,27 @@ This comparison records an inspection on 2026-10-29 using original repositories
 and their documentation. It is a static source comparison, not an operational
 benchmark. The projects may have changed after these revisions.
 
+## DeepSeek Super-agent reference prototype
+
+Separately inspected on 2026-11-10 at
+[`8c32a9d`](https://github.com/deepseek-ai/dsh-superagent-prototype/tree/8c32a9dc5d72c033816c6a8110b37f40cf94fba4).
+Its [domain model](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/8c32a9dc5d72c033816c6a8110b37f40cf94fba4/docs/001-domain.md)
+separates source events, authorization, tickets and executor assignments, and
+routes follow-up discussion through subscriptions. Its
+[execution design](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/8c32a9dc5d72c033816c6a8110b37f40cf94fba4/docs/003-execution.md)
+persists work before dispatch and recovers ticket sessions after restart.
+Structured attention and observation before proactive acceptance are useful
+patterns for reducing coordination effort.
+
+DutyLoop's repository coordinator adopts incremental intake, input receipts,
+task/attempt views and explicit observation/automatic modes around the existing
+bounded acceptance engine. Its current intake is GitHub issue and owned-PR work,
+without cross-channel messaging, a permanent conversational router or remote
+execution daemons. Desktop execution is cooperative. The reference prototype
+also labels itself research software and distinguishes its public code from
+future design ideas. Neither source comparison nor offline tests establish a
+same-model effectiveness advantage for either project.
+
 ## AUTOPILOT
 
 Inspected revision: `0d6cf5ad7945dfe027643f821422f26021a58778`.

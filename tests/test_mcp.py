@@ -13,6 +13,8 @@ from dutyloop import mcp_server
 EXPECTED_TOOLS = {
     "mission_create", "mission_start", "mission_status", "mission_stop", "mission_events", "mission_recover",
     "issues_create", "issues_start", "issues_status", "issues_stop", "issues_events", "issues_recover", "issues_resolve",
+    "repository_create", "repository_start", "repository_status", "repository_reconcile", "repository_stop",
+    "repository_events", "repository_recover", "repository_resolve", "repository_attention", "repository_set_mode",
     "desktop_next", "desktop_submit", "desktop_cancel",
 }
 
