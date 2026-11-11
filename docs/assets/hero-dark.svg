@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
 <title id="title">DutyLoop</title>
-<desc id="desc">An ongoing mission for your coding agent, illustrated by a continuing mission loop.</desc>
+<desc id="desc">A repository super-agent for your coding tools, illustrated by a continuing mission loop.</desc>
 <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
 <rect x="1" y="1" width="1198" height="338" rx="22" fill="#101F25" stroke="#30484D"/>
 <path d="M728 36V304" stroke="#30484D"/>
-<text x="58" y="76" fill="#A2BAB0" font-size="14" font-weight="650" letter-spacing="2.4">LOCAL / MISSION-DRIVEN / INSPECTABLE</text>
+<text x="58" y="76" fill="#A2BAB0" font-size="14" font-weight="650" letter-spacing="2.4">LOCAL / PERSISTENT / HUMAN-CONTROLLED</text>
 <text x="52" y="196" fill="#E7F2EC" font-size="106" font-weight="700" letter-spacing="-5">DutyLoop<tspan fill="#80D7B3">.</tspan></text>
-<text x="58" y="252" fill="#A2BAB0" font-size="26">An ongoing mission for your coding agent.</text>
+<text x="58" y="252" fill="#A2BAB0" font-size="26">A repository super-agent for your coding tools.</text>
 <rect x="58" y="283" width="29" height="4" rx="2" fill="#80D7B3"/>
 <rect x="93" y="283" width="10" height="4" rx="2" fill="#30484D"/>
 <rect x="109" y="283" width="10" height="4" rx="2" fill="#30484D"/>
