@@ -33,8 +33,9 @@ def test_observe_initial_plans_only_and_new_sources_are_non_executable(batch, on
     assert initial["intake"] == {"mode": "observe", "poll_seconds": 30}
     host = Host()
     planned = repository.run(state, driver=host, github=github)
-    assert host.calls == ["discover"] * 3
-    assert [row["state"] for row in planned["issues"]] == ["planned", "needs_decision", "planned"]
+    assert host.calls == ["discover"]
+    assert [row["state"] for row in planned["issues"]] == ["queued", "needs_decision", "queued"]
+    assert all(row["plan"] is None for row in planned["issues"])
     github.issues[4] = source(4)
     observed = repository.reconcile(state, github=github)
     assert len(observed["issues"]) == 3
@@ -52,18 +53,18 @@ def test_observe_to_auto_admits_once_and_preserves_clock_calls_and_children(batc
     deadline = planned["deadline"]
     repository.set_mode(state, "auto")
     first = repository.run(state, driver=host, github=github)
-    assert first["invocations"] == 3
+    assert first["invocations"] == 4
     assert first["issues"][0]["state"] == "accepted_local"
     assert first["deadline"] == deadline
     assert len(first["tasks"][0]["attempts"]) == 2
     github.issues[3] = source(3)
     second = repository.run(state, driver=host, github=github)
-    assert second["invocations"] == 6
+    assert second["invocations"] == 8
     assert second["deadline"] == deadline
     assert [row["state"] for row in second["issues"]] == ["accepted_local", "accepted_local"]
     again = repository.run(state, driver=host, github=github)
-    assert again["invocations"] == 6
-    assert host.calls == ["discover", "implement", "review"] * 2
+    assert again["invocations"] == 8
+    assert host.calls == ["discover", "discover", "implement", "review"] * 2
     admitted = [event for event in repository.events(state, limit=1000)["events"]
                 if event["kind"] == "repository_issue_admitted"]
     assert [event["data"]["number"] for event in admitted] == [3]
@@ -128,7 +129,8 @@ def test_observed_issue_requires_explicit_admission_and_observe_still_only_plans
     assert admitted["issues"][0]["decision"] == "Plan the documented behavior"
     host = Host()
     result = repository.run(state, driver=host, github=github)
-    assert result["issues"][0]["state"] == "planned"
+    assert result["issues"][0]["state"] == "queued"
+    assert result["issues"][0]["plan"] is None
     assert host.calls == ["discover"]
 
 
@@ -147,13 +149,13 @@ def test_empty_idle_tick_does_not_construct_or_call_driver_and_restart_keeps_dea
 def test_limit_across_ticks_never_readmits_or_renews(batch, one_tick):
     _, state, spec, github = batch
     github.issues = {1: source(1)}
-    spec.update(intake={"mode": "auto"}, limits={"max_invocations": 3, "max_wall_seconds": 300})
+    spec.update(intake={"mode": "auto"}, limits={"max_invocations": 4, "max_wall_seconds": 300})
     repository.initialize(spec, state, github=github)
     host = Host(decisions=())
     first = repository.run(state, driver=host, github=github)
     github.issues[3] = source(3)
     second = repository.run(state, driver=host, github=github)
-    assert first["invocations"] == second["invocations"] == 3
+    assert first["invocations"] == second["invocations"] == 4
     assert second["status"] == "limited"
     assert second["deadline"] == first["deadline"]
     observed = repository.reconcile(state, github=github)
@@ -233,8 +235,10 @@ def test_unknown_call_blocks_restart_until_acknowledged_without_replay(batch, on
     assert recovered["issues"][0]["state"] == "needs_decision"
     host = Host()
     final = repository.run(state, driver=host, github=github)
-    assert final["invocations"] == 1
-    assert host.calls == []
+    assert final["invocations"] == 2
+    assert host.calls == ["discover"]
+    assert final["calls"][0]["id"] == call and final["calls"][0]["state"] == "unknown"
+    assert final["issues"][0]["state"] == "needs_decision"
 
 
 def test_reconcile_cannot_erase_interrupted_delivery(batch):

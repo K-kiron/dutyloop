@@ -5,6 +5,55 @@ control-flow behavior, not long-term autonomous effectiveness or customer value.
 Raw mission state, account metadata, and host transcripts are kept private and
 are not included in this repository.
 
+## Staged backlog planning evidence on 2026-11-11
+
+A regression with 93 captured issues reproduced planning starvation against the
+preceding implementation: its 20-call budget produced no implementation. The
+same simulated-host fixture passes with staged planning: one complete roadmap,
+one detailed plan for foundation issue 93, implementation, and separate review
+use four calls, even though future work has higher task priority. Bodies and
+comments are retained for all 93 issues; the original checkout stays unchanged
+and no GitHub writes occur. This tests control flow, not a model's ability to
+prioritize 93 real issues.
+
+The focused planning, workflow, and configuration suite passed 114 tests, followed
+by four additional stage-selection and closed-issue resolution checks. It
+exercises complete-source chunks and synthesis, incomplete-coverage refusal,
+current-base detail planning, stage-boundary reassessment, human gates, explicit
+decisions, and shared limits. Replanning cannot silently discard an unfinished
+active stage or override a replacement stage's human gate and execution order.
+Existing workflow checks also retain owned-PR feedback and original acceptance
+criteria through fresh repair planning. GitHub and model responses in these
+regressions are simulated.
+
+A separate authenticated Codex CLI 0.156.1 / `gpt-6-sol` read-only fixture covered
+five synthetic issues in one call and 72.53 seconds. After inspecting an alpha
+parser's code, tests, and documented milestone, it grouped negative-count repair
+and boundary regressions as the first stage, deferred CSV export and dashboard
+work, and requested a human decision for decimal behavior. It made no detailed
+planning or implementation calls; the original checkout stayed unchanged and
+managed call cleanup was confirmed. GitHub intake was simulated and there were
+no GitHub writes. The existing host login was used without an external API-key
+file; dollar cost was not reported and remains unknown.
+
+A preceding native attempt returned repeated stage membership, including
+deferred and decision items. Semantic validation rejected it before execution;
+the prompt was clarified to omit conceptual stages without actionable work.
+The passing fixture does not establish reliable planning quality, live backlog
+effectiveness, desktop execution, or product acceptance.
+
+The complete local Windows suite passed 645 tests and 48 subtests, with one
+skip, in 1454.48 seconds before the final review fixes. Subsequent targeted
+regressions reproduced and fixed two additional cases: retaining a released
+first-stage barrier must not erase the next active stage's obligations, and
+request sizing must measure the complete serialized prompt rather than compact
+source estimates. The latter also covers Unicode authority context, bounded
+synthesis and resuming complete assessment notes. After these fixes, the full
+planning/workflow/configuration subset passed 125 tests in 127.95 seconds; Ruff,
+source compilation, source/wheel builds and a fresh installed-wheel smoke check
+also passed. Read the associated pull request's checks for final-commit
+cross-platform results.
+
 ## Repository coordination evidence on 2026-11-10
 
 Repository fixtures exercise incremental admission and observation, repeat-poll

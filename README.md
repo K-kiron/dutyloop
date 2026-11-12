@@ -36,7 +36,7 @@ DutyLoop is a **local, persistent super-agent for repository development**, buil
 
 Accepted changes accumulate on a **separate local Git branch**, with task rationale, verification results, and review records. Discovery continues after each accepted task, until a limit, blocker, or your stop command ends the run.
 
-Already have a backlog? [Issue mode](#process-github-issues) captures open GitHub issues, plans and implements eligible work, and sets aside items needing your decision. Delivery defaults to local branches; you can explicitly enable PR creation, CI-gated merging, and verified issue closure.
+Already have a backlog? [Issue mode](#process-github-issues) assesses the repository's current stage and captured open issues, builds a phased roadmap, then detail-plans and implements the next eligible item. Delivery defaults to local branches; you can explicitly enable PR creation, CI-gated merging, and verified issue closure.
 
 For ongoing ownership, [repository mode](#maintain-a-repository) reconciles new
 issues and keeps following PRs created by DutyLoop through CI and review. Begin in observation
@@ -168,7 +168,9 @@ dutyloop issues status --state ../issue-state --human
 dutyloop issues run --state ../issue-state
 ```
 
-Initialization captures the current open issues and their comments without model calls or GitHub writes. Planning consumes the batch's call budget. Execution respects issue dependencies, applies the same verification and review gates as missions, and leaves `needs_decision` items for you while continuing eligible work. `queue.batch_size` bounds each run; the total call and time limits persist across runs.
+Initialization captures the current open issues and their comments without model calls or GitHub writes. `--plan-only` assesses the whole captured backlog and produces a global phased roadmap, without detailed per-issue plans. Put the current milestone or release objective in `queue.planning_context`; `queue.planning_max_bytes` bounds each request. Large sources use complete bounded assessment chunks, and uncovered issues keep planning incomplete. Inspect coverage, stage goals, entry and exit criteria, human gates, questions and deferrals in status.
+
+Execution requires a complete current roadmap, follows stage order and dependencies, and detail-plans only the next eligible issue on the current base before implementation, operator checks and separate review. An incomplete earlier stage blocks later stages. `queue.batch_size` bounds each run; assessment, planning, retries and execution share persistent call and time limits.
 
 Set `github.delivery` to `pull_request` to publish PRs, or `merge` with explicit `required_checks` to wait for CI and merge. With `close_issues: true`, merge mode checks the merged tree and reruns your checks before closing an unchanged issue. Running or starting a batch authorizes its configured delivery operations. Uncertain effects require inspection, and a completed pass can still contain unresolved issues.
 
@@ -190,11 +192,13 @@ dutyloop repository status --state ../repository-state --human
 dutyloop repository attention --state ../repository-state
 ```
 
-After inspecting the plans, explicitly enable execution with `repository
+After inspecting the roadmap, explicitly enable execution with `repository
 set-mode --state ../repository-state --mode auto`, then use `repository start`
-to continue in the background. Observation plans the captured backlog but does
-not implement it. Unchanged idle reconciliation makes no model call; all waiting,
-attempts and restarts share the original invocation and wall-time limits.
+to continue in the background. Observation assesses all captured sources and
+creates a phased roadmap without implementing changes or admitting prospective
+issues. An unchanged idle poll makes no model call. New inputs and decisions
+invalidate the roadmap for new work; owned-PR follow-up can continue while its
+replacement is incomplete. Waiting, retries and restarts share the original limits.
 
 PR maintenance is separate from permission to merge. With `delivery:
 pull_request`, CI failures and trusted review feedback can return the same owned

@@ -150,7 +150,7 @@ def _parser() -> argparse.ArgumentParser:
         if name == "init":
             item.add_argument("--spec", type=Path, required=True)
         if name in {"run", "start"}:
-            item.add_argument("--plan-only", action="store_true")
+            item.add_argument("--plan-only", action="store_true", help="Assess the backlog and create its phased roadmap without detail planning or implementation")
         if name == "status":
             item.add_argument("--human", action="store_true")
         if name == "events":
@@ -257,6 +257,7 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
                      f"Repository: {snapshot['spec']['github']['repository']}",
                      f"Delivery: {snapshot['spec']['github']['delivery']}",
                      f"Calls: {snapshot['invocations']}/{snapshot['spec']['limits']['max_invocations']}"]
+            lines.extend(_planning_human_lines(snapshot))
             lines.extend(f"#{row['number']} [{row['state']}] {row['source']['title']}"
                          + (f" — {row['reason']}" if row.get("reason") else "") for row in snapshot["issues"])
             return "\n".join(lines)
@@ -313,6 +314,48 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
     raise ValueError(f"Unknown command: {command}")
 
 
+def _planning_human_lines(snapshot: dict) -> list[str]:
+    planning = snapshot.get("planning")
+    if not planning:
+        return []
+    coverage = planning.get("coverage", {})
+    lines = [f"Planning: {planning.get('status', 'pending')} "
+             f"(revision {planning.get('revision', 0)}; "
+             f"assessed {len(coverage.get('assessed', []))}/{coverage.get('total', 0)})"]
+    if planning.get("reason"):
+        lines.append(f"Planning reason: {planning['reason']}")
+    if coverage.get("unassessed"):
+        lines.append("Unassessed: " + ", ".join(f"#{number}" for number in coverage["unassessed"]))
+    barrier = planning.get("stage_barrier")
+    if barrier:
+        stage = barrier["stage"]
+        numbers = ", ".join(f"#{number}" for number in stage["issue_numbers"])
+        lines.append(f"Stage barrier: {stage['title']} — original issues {numbers}")
+        lines.append(f"  Original goal: {stage['goal']}")
+    roadmap = planning.get("roadmap") or {}
+    if not roadmap:
+        return lines
+    lines.append(f"Current stage: {roadmap.get('current_stage', 'unknown')}")
+    if roadmap.get("summary"):
+        lines.append(f"Roadmap: {roadmap['summary']}")
+    for stage in roadmap.get("stages", []):
+        numbers = ", ".join(f"#{number}" for number in stage.get("issue_numbers", [])) or "no issues"
+        lines.append(f"Stage {stage['id']}: {stage['title']} — {numbers}")
+        lines.append(f"  Goal: {stage['goal']}")
+        lines.append(f"  Rationale: {stage['rationale']}")
+        lines.append("  Entry: " + "; ".join(stage.get("entry_conditions", [])))
+        lines.append("  Exit: " + "; ".join(stage.get("exit_criteria", [])))
+        gate = ("human acceptance required before new work" if stage.get("requires_human_acceptance")
+                else "no additional human acceptance gate")
+        lines.append(f"  Gate: {gate}")
+    for item in roadmap.get("items", []):
+        if item.get("disposition") in {"needs_decision", "defer"}:
+            lines.append(f"#{item['number']} [{item['disposition']}]: {item.get('reason', '')}")
+            if item.get("question"):
+                lines.append(f"  Question: {item['question']}")
+    return lines
+
+
 def _repository_human_status(snapshot: dict) -> str:
     spec = snapshot["spec"]
     executor = snapshot.get("executor", {})
@@ -324,6 +367,7 @@ def _repository_human_status(snapshot: dict) -> str:
              f"Delivery: {spec['github']['delivery']}",
              f"Executor: {execution}",
              f"Calls: {snapshot['invocations']}/{spec['limits']['max_invocations']}"]
+    lines.extend(_planning_human_lines(snapshot))
     if executor.get("host_driven"):
         lines.append("Desktop execution requires an active connected host; DutyLoop cannot wake it or stop its external tools.")
     if snapshot.get("reason"):

@@ -42,7 +42,7 @@ def main() -> None:
         if "--client" not in desktop_help:
             raise RuntimeError("Installed wheel is missing desktop configuration")
         # Import the actual issue controller outside source without contacting GitHub.
-        subprocess.run([str(executable), "-c", "from dutyloop import issues, desktop, repository; assert callable(issues.run); assert callable(repository.reconcile); assert callable(desktop.DesktopDriver)"],
+        subprocess.run([str(executable), "-c", "from dutyloop import issues, desktop, repository, backlog, backlog_runner; assert callable(issues.run); assert callable(repository.reconcile); assert callable(desktop.DesktopDriver); assert callable(backlog.validate_roadmap); assert callable(backlog_runner.select_work)"],
                        cwd=directory, env=environment, check=True, timeout=10)
         demo = subprocess.run([str(executable), "-m", "dutyloop", "demo", "--directory", str(directory / "demo")],
                               cwd=directory, env=environment, text=True, capture_output=True, timeout=180)

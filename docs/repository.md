@@ -9,8 +9,9 @@ scope, verification commands, delivery permissions, and finite budget.
 flowchart LR
     G[GitHub issues and owned PR feedback] --> R[Reconcile and deduplicate]
     R --> Q[Persistent tasks and input receipts]
-    Q --> P[Plan within stored authority]
-    P --> E[Implement, verify and review]
+    Q --> P[Assess repository stage and whole backlog]
+    P --> S[Complete phased roadmap]
+    S --> E[Detail-plan next issue, implement, verify and review]
     E --> D[Configured local or GitHub delivery]
     D --> G
     P --> H[Structured human attention]
@@ -35,10 +36,12 @@ dutyloop repository run --state ../repository-state
 models or publish changes. `run` coordinates reconciliation and execution until
 stopped or limited. Use `start` instead to launch the coordinator in the background.
 
-The default `intake.mode` is `observe`. Captured issues can be planned, consuming
-the existing call budget, but are not implemented. New issues are recorded as
-prospective work. Inspect status, plans and the attention list before enabling
-execution explicitly:
+The default `intake.mode` is `observe`. Read-only discovery assesses the current
+repository stage and whole captured backlog, then creates a phased roadmap using
+the existing call budget. It does not detail-plan every issue or implement work.
+New issues are recorded as prospective work. Assessment can consider unadmitted
+sources without admitting them or authorizing execution. Inspect the roadmap and
+attention list before enabling execution explicitly:
 
 ```console
 dutyloop repository status --state ../repository-state --human
@@ -52,6 +55,31 @@ mission and delivery policy. Changing mode is recorded; it does not renew the
 budget, clear a stop, or approve changed issue requirements. `queue.numbers`
 restricts intake when supplied. Excluded labels and `queue.max_issues` still apply.
 
+Use `queue.planning_context` to describe the current milestone or release
+objective, and `queue.planning_max_bytes` to bound each planning request:
+
+```json
+{
+  "queue": {
+    "planning_context": "Finish reliability fixes for the current release before starting new integrations.",
+    "planning_max_bytes": 131072
+  }
+}
+```
+
+Planning considers all captured issue bodies and comments. Large inputs are
+assessed in complete bounded chunks, then synthesized into one roadmap. An
+oversized source or partial assessment reports uncovered issue numbers and
+cannot activate a partial roadmap for new work. The
+[issue configuration reference](issues.md#configuration-reference) gives limits.
+
+Status exposes `planning.status`, revision, fingerprint, base, coverage and the
+roadmap. The human view shows assessment counts, the current repository stage,
+stage issue groups, goals, rationale, entry and exit criteria, human gates,
+questions and deferral reasons. Complete durable coverage is required before
+selecting new work. Changed captured inputs, admission or operator decisions
+invalidate that roadmap and require reassessment.
+
 ## One task across several attempts
 
 The repository view links each issue to its plan, child execution attempts,
@@ -59,14 +87,19 @@ verification evidence, branch, and owned pull request. Repeated polls of the
 same source do not create a new task. Input fingerprints and receipts survive
 restart. An unchanged idle poll makes no model call.
 
-Task execution stays serial. The coordinator delegates implementation, staged
-snapshot verification, separate review and delivery to the existing issue and
-mission engines. A worktree remains an execution directory, not a sandbox.
+Task execution stays serial and follows roadmap stage order. Only the next
+eligible issue receives a detailed plan on the current accepted base, followed
+by implementation, operator checks and separate review. Later stages cannot skip
+incomplete earlier work. A stage's human acceptance gate requires operator intent
+before new work; textual exit criteria remain evidence requirements alongside
+the existing checks, rather than automatic proof of product acceptance. The
+coordinator retains the issue and mission engines' scope and delivery gates.
+A worktree remains an execution directory, not a sandbox.
 
 New requirements are evidence requiring inspection. A changed issue description,
 labels or comments must not silently replace the scope that was accepted.
 Missing business intent and uncertain prior effects become attention items while
-other eligible issues remain runnable.
+other issues in the current eligible stage can remain runnable.
 
 ## Keep an owned pull request moving
 
@@ -79,6 +112,10 @@ Pending merge checks yield back to the repository coordinator. Intake and
 planning can continue while one owned PR waits, while subsequent implementation
 still waits for its accepted merge base. Finite issue batches retain their
 existing wait-for-merge behavior.
+
+Existing owned-PR delivery and feedback follow-up remain eligible even when new
+inputs leave the replacement roadmap incomplete. This preserves existing
+delivery authority and does not admit unrelated new work.
 
 `github.maintain_pull_requests` defaults to `true`; set it to `false` to leave
 published PRs for the maintainer. Review authors with GitHub association `OWNER`,

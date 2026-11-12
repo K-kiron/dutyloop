@@ -37,6 +37,7 @@ class FeedbackHost(workflow.Host):
     def __init__(self, verdict="work", **kwargs):
         super().__init__(**kwargs)
         self.verdict, self.assessments = verdict, []
+        self.repair_plans = []
 
     def run(self, request, should_stop):
         data = json.loads(request.prompt[request.prompt.index('{"authority"'):])
@@ -44,6 +45,8 @@ class FeedbackHost(workflow.Host):
             self.calls.append(request.phase)
             self.assessments.append(data)
             return DriverResult(payload={"status": self.verdict, "summary": "Review assessment"})
+        if data.get("owned_pr_feedback"):
+            self.repair_plans.append(data)
         return super().run(request, should_stop)
 
 
@@ -73,6 +76,11 @@ def test_trusted_review_feedback_is_reassessed_and_repaired_once_on_owned_pr(bat
     assert row["pr_number"] == first["pr_number"] and row["branch"] == first["branch"]
     assert len(host.assessments) == 1
     assert host.assessments[0]["pull_request_feedback"] == github.feedback
+    assert len(host.repair_plans) == 1
+    assert host.repair_plans[0]["owned_pr_feedback"]["reviews"] == github.feedback
+    assert host.repair_plans[0]["original_acceptance"] == first["original_acceptance"]
+    assert all(criterion in row["plan"]["candidates"][0]["acceptance"]
+               for criterion in first["original_acceptance"])
     assert "ci_repair = True" in git(batch[0], "show", f"{row['head']}:app.py")
     resumed = issues.run(state, driver=host, github=github)
     assert resumed["invocations"] == repaired["invocations"]
@@ -88,7 +96,8 @@ def test_ambiguous_or_nonactionable_feedback_never_enters_implementation(batch, 
     result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["state"] == expected
     assert result["issues"][0]["head"] == first["head"]
-    assert host.calls == ["discover"]
+    assert host.calls == ["discover"] * (2 if verdict == "needs_decision" else 1)
+    assert len(host.assessments) == 1
     assert github.writes == [("create", 100)]
     if verdict == "no_work":
         resumed = issues.run(state, driver=host, github=github)
@@ -123,8 +132,8 @@ def test_explicit_bot_author_allowlist_permits_bounded_reassessment(batch):
     github.feedback = [feedback(association="NONE", author=actor, head=first["head"])]
     host = FeedbackHost("needs_decision")
     result = issues.run(state, driver=host, github=github)
-    assert host.calls == ["discover"] and len(host.assessments) == 1
-    assert result["invocations"] == before["invocations"] + 1
+    assert host.calls == ["discover", "discover"] and len(host.assessments) == 1
+    assert result["invocations"] == before["invocations"] + 2
     assert result["issues"][0]["state"] == "needs_decision"
     assert result["issues"][0]["head"] == first["head"]
     assert github.writes == [("create", 100)]
@@ -149,7 +158,8 @@ def test_review_retry_limit_stops_repeated_new_feedback_without_merge(batch):
     host = FeedbackHost()
     result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["reason"] == "pr_retry_limit"
-    assert not host.calls and github.writes == [("create", 100)]
+    assert host.calls == ["discover"] and not host.assessments and not host.repair_plans
+    assert github.writes == [("create", 100)]
 
 
 def test_resolve_owned_pr_preserves_identity_and_replans_on_its_head(batch):
@@ -162,7 +172,8 @@ def test_resolve_owned_pr_preserves_identity_and_replans_on_its_head(batch):
     assert row["branch"] == first["branch"] and row["pr_number"] == first["pr_number"]
     assert row["source"]["body"] == github.issues[1]["body"]
     planned = issues.run(state, driver=workflow.Host(), github=github, plan_only=True)
-    assert planned["issues"][0]["state"] == "planned"
+    assert planned["issues"][0]["state"] == "queued"
+    assert planned["issues"][0]["plan"] is None
     assert planned["issues"][0]["head"] == first["head"]
     assert planned["deadline"] == resolved["deadline"]
 
@@ -281,7 +292,7 @@ def test_crash_after_known_review_assessment_retains_pending_repair(batch, monke
     row = repaired["issues"][0]
     assert row["state"] == "pull_request" and row["head"] != first["head"]
     assert row["branch"] == first["branch"] and row["pr_number"] == first["pr_number"]
-    assert host.calls == ["discover", "implement", "review"]
+    assert host.calls == ["discover", "discover", "implement", "review"]
     assert len(host.assessments) == 1
     resumed = issues.run(state, driver=host, github=github)
     assert resumed["invocations"] == repaired["invocations"]
@@ -296,7 +307,8 @@ def test_direct_issue_executor_obeys_repository_observe_policy(batch):
     RepositoryStore(state).create({"mode": "observe", "poll_seconds": .05})
     host = workflow.Host()
     result = issues.run(state, driver=host, github=github, plan_only=False)
-    assert result["issues"][0]["state"] == "planned"
+    assert result["issues"][0]["state"] == "queued"
+    assert result["issues"][0]["plan"] is None
     assert host.calls == ["discover"] and not github.writes
     # A caller holding an old auto-mode snapshot still cannot dispatch a task.
     again = issues.run(state, driver=host, github=github, plan_only=False)
@@ -359,9 +371,10 @@ def test_repository_pending_merge_yields_for_new_intake_and_planning(batch, monk
     monkeypatch.setattr(repository, "_wait", coordinator_wait)
     result = repository.run(state, driver=host, github=github)
     assert len(ticks) == 2
-    assert [row["state"] for row in result["issues"]] == ["pull_request", "planned"]
+    assert [row["state"] for row in result["issues"]] == ["pull_request", "waiting_dependency"]
+    assert result["issues"][1]["plan"] is None
     assert ticks[0]["status"] == "ready" and ticks[0]["reason"] == "pull_requests_pending"
-    assert host.calls == ["discover", "implement", "review", "discover"]
+    assert host.calls == ["discover", "implement", "review", "discover", "discover"]
     assert github.writes == [("create", 100)]
     assert github.issues[1]["state"] == "open" and github.issues[3]["state"] == "open"
 
