@@ -83,8 +83,9 @@ spec=<that JSON object>), then issues_start(name="maintenance-issues").
 Use a stable worker_id for this worker and a distinct context_id for each actual
 host context. Call desktop_next(name="maintenance-issues", worker_id=<worker>,
 context_id=<context>, kind="issues"). If no request is ready, read issues_status,
-wait briefly, and poll again while the runner is active. Keep per-issue human
-decisions visible and continue independent issues. Stop polling at a terminal
+wait briefly, and poll again while the runner is active. Keep roadmap stage
+gates and per-issue decisions visible. Continue only eligible work in the current
+stage. Stop polling at a terminal
 batch state or when the batch cannot progress without an operator decision.
 
 For each request, follow its prompt and schema at its exact cwd. Respect its
@@ -107,8 +108,23 @@ Use `issues_status` and `issues_events` to follow progress. Read the
 [issue workflow](issues.md) for dependencies and human decisions.
 
 For an initial planning pass, call `issues_start(name=..., plan_only=true)`.
-The desktop host receives read-only planning requests; implementation waits for
-a later `issues_start(name=...)` without that flag. The CLI equivalent is
+The host receives read-only discovery requests with `planning_operation` set to
+`roadmap` or `assess`: inspect the current repository stage and all supplied
+backlog sources, then return the request's schema. Complete bounded chunks cover
+captured issue bodies and comments before synthesis; report uncovered inputs
+instead of silently truncating them. This creates a global phased roadmap only,
+not detailed plans for every issue. Review coverage, stage goals, entry and exit
+criteria, human gates, questions and deferrals in `issues_status`. Use
+`queue.planning_context` for the operator's current milestone objective and
+`queue.planning_max_bytes` for the request bound. These are shared with native
+execution and do not expand authority.
+
+Implementation waits for a later `issues_start(name=...)` without that flag and
+a complete current roadmap. Then only the next eligible issue receives a detailed
+plan on the current base before implementation, checks and separate review.
+An incomplete earlier stage blocks later stages. Existing owned-PR feedback and
+delivery follow-up can continue while a replacement roadmap is incomplete.
+The CLI equivalent for roadmap-only work is
 `dutyloop issues start --state /absolute/path/to/state --plan-only`.
 
 For a standing mission, use [desktop-mission.json](../examples/desktop-mission.json),

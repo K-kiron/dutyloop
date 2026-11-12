@@ -36,7 +36,7 @@ DutyLoop 是基于现有编程工具的**本地、持久化仓库开发 super-ag
 
 通过验收的改动会积累在**独立的本地 Git 分支**上，并保留任务依据、检查结果和复核记录。 每项任务通过后，DutyLoop 会继续发现工作，直到达到运行上限、遇到阻塞，或收到你的停止指令。
 
-已有待办 issue 时，可以使用 [issue 模式](#处理-github-issue)：捕获 GitHub 开放 issue，规划并实施可执行的工作，将需要你决定的事项单独保留。默认产出本地分支；也可以明确配置创建 PR、等待 CI 后合并，以及验收后关闭 issue。
+已有待办 issue 时，可以使用 [issue 模式](#处理-github-issue)：结合仓库当前阶段分析捕获的开放 issue，形成分阶段路线图，再详细规划并实施下一项可执行工作。默认产出本地分支；也可以明确配置创建 PR、等待 CI 后合并，以及验收后关闭 issue。
 
 需要持续负责仓库时，使用[仓库维护模式](docs/repository.md)：增量接收新 issue，
 持续跟进由 DutyLoop 创建的 PR 的 CI 和评审，将需要人决定的事项集中显示。默认先观察和规划，
@@ -166,7 +166,9 @@ dutyloop issues status --state ../issue-state --human
 dutyloop issues run --state ../issue-state
 ```
 
-初始化会捕获当前开放 issue 及其评论，不调用模型，也不修改 GitHub。规划会消耗整个批次共用的调用额度。执行遵循 issue 依赖，使用与持续职责相同的验证和复核流程，将 `needs_decision` 事项留给你，并继续处理其他可执行工作。`queue.batch_size` 限制单次运行处理的 issue 数量；总调用额度和时间上限跨多次运行保留。
+初始化会捕获当前开放 issue 及其评论，不调用模型，也不修改 GitHub。`--plan-only` 分析整个已捕获待办，只生成全局分阶段路线图，不逐项生成详细实施计划。通过 `queue.planning_context` 提供当前里程碑或发布目标，`queue.planning_max_bytes` 限制每次请求大小。较大的输入按有界且完整的分块分析；存在未覆盖 issue 时，规划保持不完整。状态会显示覆盖情况、各阶段目标、进入与退出条件、人工验收门槛、待答问题和推迟理由。
+
+执行新工作前必须有完整且有效的路线图。执行遵循阶段顺序和依赖，只针对当前基线上的下一项可执行 issue 详细规划，再依次实施、运行操作者检查并单独复核。前一阶段未完成时不能跳到后一阶段。`queue.batch_size` 限制单次实施的 issue 数量；分析、规划、重试和执行共用跨运行保留的调用与时间额度。
 
 将 `github.delivery` 设为 `pull_request` 可发布 PR；设为 `merge` 并明确指定 `required_checks`，可等待 CI 后合并。启用 `close_issues: true` 后，合并模式会核对合并后的 Git 树并重新运行你的检查，再关闭需求未变化的 issue。运行或启动批次，即授权执行配置中选定的交付操作。结果不明的操作需要检查；一轮完成也可能仍有未解决的 issue。
 
@@ -186,10 +188,11 @@ dutyloop repository status --state ../repository-state --human
 dutyloop repository attention --state ../repository-state
 ```
 
-检查计划后，用 `repository set-mode --state ../repository-state --mode auto`
+检查路线图后，用 `repository set-mode --state ../repository-state --mode auto`
 明确开启实施，再用 `repository start --state ../repository-state` 后台运行。
-观察模式只规划已捕获任务，不实施改动；空闲且输入未变化时不调用模型。
-新任务、等待、重试和重启共用原有调用与时间额度。
+观察模式分析全部已捕获来源并形成分阶段路线图，不实施改动，也不批准候选 issue 进入执行队列；空闲且输入未变化时不调用模型。
+新输入和决定会使路线图对新工作失效；重新规划未完成时，已有 PR 的交付与反馈跟进仍可继续。
+等待、重试和重启共用原有调用与时间额度。
 
 PR 维护与合并权限分别控制：`delivery: pull_request` 也可跟进 CI 和可信评审，
 重新规划并修复同一个 PR。范围变化和缺失的业务决定会留在人工待办中。

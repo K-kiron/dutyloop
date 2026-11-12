@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import html
 import hashlib
+import copy
 import re
 import signal
 import threading
@@ -12,7 +13,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import engine
+from . import backlog, backlog_runner, engine
 from .config import plain_path
 from .drivers import DriverResult, get_driver
 from .github import GitHub, GitHubError
@@ -60,7 +61,7 @@ def initialize(spec, state_dir, *, github=None):
 
 
 def status(state_dir):
-    return IssueStore(state_dir).snapshot()
+    return backlog_runner.present(backlog_runner.read_snapshot(IssueStore(state_dir)))
 
 
 def stop(state_dir):
@@ -125,7 +126,12 @@ def resolve(state_dir, number, decision, *, github=None):
     with runner_lock(store.directory):
         snapshot = store.snapshot()
         row = next((row for row in snapshot["issues"] if row["number"] == number), None)
-        if row is None or row["state"] not in {"needs_decision", "failed", "waiting_dependency"}:
+        barrier = (snapshot.get("planning") or {}).get("stage_barrier")
+        barrier_member = bool(barrier and number in barrier["stage"]["issue_numbers"])
+        gated = any(stage["requires_human_acceptance"] and number in stage["issue_numbers"]
+                    for stage in ((snapshot.get("planning") or {}).get("roadmap") or {}).get("stages", []))
+        if row is None or row["state"] not in {"needs_decision", "failed", "waiting_dependency"} and not (
+                row["state"] == "queued" and gated or row["state"] == "external_closed" and barrier_member):
             raise ValueError("Only a decision, failed, or dependency-waiting issue can be replanned")
         client = github or _client(snapshot["spec"], store.directory)
         if row.get("pr_number") or row.get("head"):
@@ -137,12 +143,16 @@ def resolve(state_dir, number, decision, *, github=None):
             if pr.get("merged") or pr.get("state") != "open":
                 raise ValueError("An existing delivery must be an open owned PR to resolve")
         source = client.get_issue(number)
-        if source["state"] != "open":
+        closed = source["state"] != "open"
+        if closed and not barrier_member:
             store.update_issue(number, "external_closed", reason="closed_outside_batch")
             return store.snapshot()
         store.refresh_source(number, source)
-        store.update_issue(number, "queued", plan=None, decision=decision.strip(), reason=None,
-                           pending_scope_sha256=None)
+        # An explicit scope decision can release an old stage obligation, but
+        # external closure never becomes verified completion or executable work.
+        store.update_issue(number, "external_closed" if closed else "queued", plan=None,
+                           decision=decision.strip(), reason="closed_outside_batch" if closed else None,
+                           pending_scope_sha256=None, decision_id=uuid.uuid4().hex)
         store.event("operator_decision", {"number": number, "decision": decision.strip()})
         if snapshot["status"] == "completed":
             store.set_status("ready")
@@ -228,7 +238,8 @@ class IssueRunner:
         workspace = make_worktree(self.project, self.store.directory / "bases" / token, head)
         directory = self.store.directory / "missions" / token
         core = {key: value for key, value in self.spec.items() if key not in {"github", "queue"}}
-        core.update(project=str(workspace), branch=branch_name(f"work/issue-{number}-{purpose}-{token}"))
+        label = f"issue-{number}-{purpose}" if number is not None else "backlog-plan"
+        core.update(project=str(workspace), branch=branch_name(f"work/{label}-{token}"))
         core["limits"] = {"max_invocations": max(1, self.spec["limits"]["max_invocations"] - self.store.control()["invocations"]),
                           "max_wall_seconds": max(.1, self.remaining())}
         core["research_domains"] = list(dict.fromkeys([*core["research_domains"], "github.com"]))
@@ -280,8 +291,13 @@ class IssueRunner:
                 "Use source files or the supplied issue URL as evidence. Each evidence.source must be an exact "
                 "project-relative file path (put line details in observation) or the supplied HTTPS issue URL. "
                 "Supply a concrete implementation/test plan "
-                "in summary and actionable acceptance criteria in the candidate.",
+                "in summary and actionable acceptance criteria in the candidate. For an owned PR repair, "
+                "address the supplied assessed feedback and retain every original acceptance criterion.",
                 issue=row["source"], operator_decision=row.get("decision"),
+                owned_pr_feedback=row.get("feedback", []),
+                original_issue_plan=row.get("plan") if row.get("pr_number") else None,
+                original_acceptance=row.get("original_acceptance", []),
+                roadmap=backlog_runner.stage_context(self, number),
                 backlog=[{"number": item["number"], "title": item["source"]["title"]}
                          for item in self.store.snapshot()["issues"]]), ISSUE_PLAN_SCHEMA)
             assert_identity(workspace, head, pointer)
@@ -293,9 +309,28 @@ class IssueRunner:
                 if len(result["candidates"]) != 1:
                     raise ValueError("An actionable issue requires exactly one candidate")
                 candidate = {**result["candidates"][0], "key": f"issue-{number}"}
+                if row.get("pr_number"):
+                    previous = row.get("plan") or {}
+                    original_acceptance = row.get("original_acceptance") or (
+                        previous["candidates"][0]["acceptance"] if previous.get("candidates") else [])
+                    candidate["acceptance"] = list(dict.fromkeys([
+                        *original_acceptance, *candidate["acceptance"]]))
+                    result["dependencies"] = list(dict.fromkeys([
+                        *row.get("original_dependencies", previous.get("dependencies", [])), *result["dependencies"]]))
                 candidate = supervisor.candidate(candidate, workspace)
                 result["candidates"] = [candidate]
-                self.store.update_issue(number, "planned", plan=result, reason=None)
+                context = backlog_runner.stage_context(self, number)
+                item = context.get("item") or {}
+                result["dependencies"] = list(dict.fromkeys([*result["dependencies"], *item.get("dependencies", [])]))
+                roadmap = (self.store.control().get("planning") or {}).get("roadmap")
+                if roadmap and not row.get("pr_number"):
+                    checked = copy.deepcopy({key: value for key, value in roadmap.items() if key != "source_receipts"})
+                    for planned in checked["items"]:
+                        if planned["number"] == number:
+                            planned["dependencies"] = result["dependencies"]
+                    backlog.validate_roadmap(checked, backlog_runner.inputs(backlog_runner.current_snapshot(self)))
+                self.store.update_issue(number, "planned", plan=result, reason=None, plan_base_sha=head,
+                                        roadmap_revision=context.get("revision"))
             else:
                 if result["candidates"]:
                     raise ValueError("A decision item cannot contain executable candidates")
@@ -315,9 +350,7 @@ class IssueRunner:
         rows = {item["number"]: item for item in self.store.snapshot()["issues"]}
         for dependency in row["plan"]["dependencies"]:
             if dependency in rows:
-                state = rows[dependency]["state"]
-                done = state in (_TERMINAL if self.spec["github"]["delivery"] == "local"
-                                  else {"closed", "external_closed", "delivered"})
+                done = backlog.verified(rows[dependency], self.spec["github"]["delivery"])
             else:
                 done = self.github.get_issue(dependency)["state"] == "closed"
             if not done:
@@ -337,6 +370,9 @@ class IssueRunner:
             return
         # A CI repair extends the same PR branch; an unrelated issue starts from the base.
         head = row.get("head") or self.base()
+        if row.get("plan_base_sha") != head:
+            self.store.update_issue(number, "queued", plan=None, reason="execution_base_changed")
+            return
         if row.get("head") and row.get("base_sha") != self.base():
             self.store.update_issue(number, "needs_decision", reason="base_changed_during_delivery")
             return
@@ -344,6 +380,8 @@ class IssueRunner:
         self.store.update_issue(number, "implementing", child_state=str(directory), base_sha=row.get("base_sha") or head)
         candidate = {key: value for key, value in row["plan"]["candidates"][0].items() if key != "source_receipts"}
         candidate["why"] += "\nIssue plan: " + row["plan"]["summary"]
+        candidate["why"] += "\nRepository roadmap: " + json.dumps(
+            backlog_runner.stage_context(self, number), ensure_ascii=False)
         if row.get("feedback"):
             candidate["why"] += "\nDelivery feedback: " + json.dumps({
                 "repository": self.spec["github"]["repository"], "pr_number": row.get("pr_number"),
@@ -372,10 +410,13 @@ class IssueRunner:
         git(self.project, "update-ref", f"refs/heads/{branch}", task["commit_sha"], previous)
         self.store.update_issue(number, "accepted", head=task["commit_sha"], branch=branch,
                                 verified_tree=task["verified_tree"], verification=task["checks"],
-                                review=task["review"], delivery_attempts=row.get("delivery_attempts", 0) + 1)
+                                review=task["review"], delivery_attempts=row.get("delivery_attempts", 0) + 1,
+                                original_acceptance=row.get("original_acceptance") or row["plan"]["candidates"][0]["acceptance"],
+                                original_dependencies=row.get("original_dependencies", row["plan"]["dependencies"]))
         if self.spec["github"]["delivery"] == "local":
             self.store.set_status("running", accepted_head=task["commit_sha"])
             self.store.update_issue(number, "accepted_local")
+            backlog_runner.note_progress(self, task["commit_sha"])
 
     def metadata(self, row):
         title = f"{row['plan']['candidates'][0]['kind']}: {row['plan']['candidates'][0]['title']}"
@@ -636,6 +677,7 @@ class IssueRunner:
                                 post_merge_verified=row["merge_sha"])
         self.store.event("post_merge_verified", {"number": row["number"], "merge_sha": row["merge_sha"],
                                                  "tree": row["verified_tree"], "checks": checks})
+        backlog_runner.note_progress(self, base)
         if github["delivery"] != "merge" or not github["close_issues"]:
             self.store.update_issue(row["number"], "delivered")
             return
@@ -650,17 +692,15 @@ class IssueRunner:
         self.store.event("issue_closed", {"number": row["number"], "pr_number": row["pr_number"], "merge_sha": row["merge_sha"]})
 
     def loop(self, plan_only=False, *, yield_pending=False):
-        for row in self.store.snapshot()["issues"]:
-            if self.stopped():
-                break
-            if row["state"] == "queued":
-                self.plan(row)
-        if plan_only or self.stopped():
+        if plan_only:
+            backlog_runner.Planner(self, _BudgetDriver).ensure()
             return
         worked = set()
         while not self.stopped():
             progress = False
             rows = self.store.snapshot()["issues"]
+            # Existing delivery obligations retain their original authority even
+            # while a replacement global roadmap is incomplete.
             for row in rows:
                 if self.stopped():
                     return
@@ -669,30 +709,84 @@ class IssueRunner:
                     self.delivery(row)
                     progress |= self.row(row["number"])["state"] != before
             rows = self.store.snapshot()["issues"]
+            repairs = [row for row in rows if row.get("pr_number") and row.get("head")
+                       and row["state"] in {"queued", "planned", "waiting_dependency"}]
+            if repairs:
+                self.execute_next(repairs[0], worked)
+                if self.stopped():
+                    return
+                if self.row(repairs[0]["number"])["state"] in {"queued", "planned", "waiting_dependency"}:
+                    self.store.set_status("ready", "owned_pr_repair_waiting")
+                    return
+                continue
+            if self.stopped():
+                return
+            if len(worked) >= self.spec["queue"]["batch_size"] and any(
+                    row["state"] in {"queued", "planned", "waiting_dependency"} for row in self.store.snapshot()["issues"]):
+                self.store.set_status("ready", "batch_size_reached")
+                return
+            if not backlog_runner.Planner(self, _BudgetDriver).ensure():
+                if not self.stopped():
+                    self.store.set_status("ready", "backlog_assessment_incomplete")
+                return
+            snapshot = self.store.snapshot()
+            planning = snapshot.get("planning") or {}
+            roadmap = planning.get("roadmap")
+            if not roadmap:
+                self.store.set_status("completed", "queue_processed")
+                return
+            stage, items, gate = backlog_runner.select_work(snapshot)
+            previous_stage = planning.get("active_stage_id")
+            previous_definition = planning.get("active_stage")
+            previous_complete = previous_definition and all(
+                backlog.verified(self.row(number), self.spec["github"]["delivery"])
+                for number in previous_definition["issue_numbers"])
+            if stage and previous_stage and stage["id"] != previous_stage and previous_complete:
+                self.store.event("backlog_stage_completed", {"stage_id": previous_stage,
+                                 "revision": planning["revision"], "accepted_head": snapshot["accepted_head"]})
+                # Reassess the current repository at a phase boundary; don't
+                # consume calls after each individual accepted change.
+                planning.update(status="stale", expected_head=None)
+                self.store.save_planning(planning)
+                continue
+            if stage:
+                planning["active_stage_id"] = stage["id"]
+                planning["active_stage"] = stage
+                planning.setdefault("active_stage_decisions", {
+                    str(row["number"]): row.get("decision_id") for row in snapshot["issues"]})
+                self.store.save_planning(planning)
+            if gate == "stage_requires_human_acceptance":
+                for number in stage["issue_numbers"]:
+                    row = self.row(number)
+                    if row["state"] in {"queued", "planned", "waiting_dependency"}:
+                        self.store.update_issue(number, "needs_decision", reason="stage_requires_human_acceptance")
+                planning["source_fingerprint"] = backlog_runner.source_fingerprint(backlog_runner.current_snapshot(self))
+                self.store.save_planning(planning)
+                self.store.set_status("completed", "stage_requires_human_acceptance")
+                return
             # One active delivery in merge mode keeps later changes on the latest
             # accepted target base instead of stacking unrelated unmerged PRs.
             awaiting_merge = self.spec["github"]["delivery"] == "merge" and any(
                 row["state"] in {"accepted", "pull_request", "merged"} for row in rows)
-            planned = sorted((row for row in rows if row["state"] in {"planned", "waiting_dependency"}),
-                             key=lambda row: (-row["plan"]["candidates"][0]["priority"], row["number"]))
-            for row in planned:
+            for item in items:
                 if self.stopped():
                     return
                 if awaiting_merge:
                     break
-                if not self.dependencies_met(row):
-                    self.store.update_issue(row["number"], "waiting_dependency", reason="dependencies_not_completed")
+                row = self.row(item["number"])
+                if not self.execute_next(row, worked):
+                    if self.store.control()["reason"] == "batch_size_reached" or self.stopped():
+                        return
                     continue
-                if len(worked) >= self.spec["queue"]["batch_size"] and row["number"] not in worked:
-                    self.store.set_status("ready", "batch_size_reached")
-                    return
-                worked.add(row["number"])
-                self.implement(row)
                 progress = True
-                # Refresh dependencies before selecting another issue.
                 break
             if progress:
                 continue
+            if stage and not items:
+                for number in stage["issue_numbers"]:
+                    row = self.row(number)
+                    if row["state"] == "queued":
+                        self.store.update_issue(number, "waiting_dependency", reason="stage_dependencies_not_completed")
             pending = any(row["state"] in {"accepted", "pull_request", "merged"} for row in self.store.snapshot()["issues"])
             if pending and self.spec["github"]["delivery"] == "merge" and not yield_pending:
                 until = time.monotonic() + min(self.spec["poll_seconds"], self.remaining())
@@ -702,10 +796,40 @@ class IssueRunner:
             if pending:
                 self.store.set_status("ready", "pull_requests_pending")
                 return
-            self.store.set_status("completed", "awaiting_decisions_or_dependencies" if any(
+            self.store.set_status("completed", "awaiting_decisions_or_dependencies" if stage or any(
                 row["state"] in {"needs_decision", "waiting_dependency", "failed", "interrupted"}
-                for row in self.store.snapshot()["issues"]) else "queue_processed")
+                for row in self.store.snapshot()["issues"]) else "roadmap_deferred" if any(
+                    item["disposition"] == "defer" for item in roadmap["items"]) else "queue_processed")
             return
+
+    def execute_next(self, row, worked):
+        """Reserve enough budget for the next complete issue attempt, not a sweep."""
+        number = row["number"]
+        if len(worked) >= self.spec["queue"]["batch_size"] and number not in worked:
+            self.store.set_status("ready", "batch_size_reached")
+            return False
+        head = row.get("head") or self.base()
+        planning = self.store.control().get("planning") or {}
+        detail_needed = (not row.get("plan") or row.get("plan_base_sha") != head
+                         or row.get("roadmap_revision") != planning.get("revision"))
+        required = 3 if detail_needed else 2
+        remaining = self.spec["limits"]["max_invocations"] - self.store.control()["invocations"]
+        if remaining < required:
+            self.store.set_status("limited", "invocation_limit" if remaining == 0 else "insufficient_task_budget")
+            return False
+        if detail_needed:
+            self.plan(row)
+            row = self.row(number)
+        if self.stopped():
+            return False
+        if row["state"] not in {"planned", "waiting_dependency"}:
+            return True
+        if not self.dependencies_met(row):
+            self.store.update_issue(number, "waiting_dependency", reason="dependencies_not_completed")
+            return False
+        worked.add(number)
+        self.implement(row)
+        return True
 
 
 def run(state_dir, *, driver=None, github=None, plan_only=False):
@@ -773,4 +897,4 @@ def run(state_dir, *, driver=None, github=None, plan_only=False):
                 store.set_status(data["status"], data.get("reason"), runner_pid=None)
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
-    return store.snapshot()
+    return backlog_runner.present(backlog_runner.read_snapshot(store))

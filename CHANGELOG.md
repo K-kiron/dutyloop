@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Assess the complete captured backlog against the current repository stage
+  before execution. Persist evidence, phased goals and acceptance gates,
+  dependencies, deferred work and human decisions; assess large inputs in
+  resumable chunks without treating partial coverage as an executable roadmap.
+- Plan individual issues only when their stage is ready, against the execution
+  base, leaving budget for implementation and review. Reassess at phase
+  boundaries and source changes while retaining unfinished stage obligations,
+  existing PR repairs, decisions and shared limits.
+
 - Keep repository intake and planning responsive while merge checks are pending;
   retain finite issue-batch waiting. Classify clean read deadlines as limits,
   preserve blocked unknown results across stop signals, and support explicitly

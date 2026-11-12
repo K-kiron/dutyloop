@@ -4,10 +4,11 @@ For incremental intake and continued PR follow-up, use
 [repository mode](repository.md). The commands below process a finite captured
 backlog; repository mode coordinates repeated passes with the same limits.
 
-Issue mode turns a finite snapshot of open GitHub issues into plans, isolated
-changes, and optionally pull requests and merged fixes. Items needing a decision
-remain visible while other eligible issues continue. It does not promise that
-every open issue can be resolved automatically.
+Issue mode assesses a finite snapshot of open GitHub issues against the current
+repository stage, creates a phased roadmap, then plans and implements the next
+eligible issue. Delivery can remain local or use explicitly configured pull
+requests and merges. It does not promise that every issue can be resolved
+automatically.
 
 ## Prepare and inspect plans
 
@@ -37,10 +38,34 @@ directory for another snapshot. Issue bodies, comments, and transcripts can
 contain private material, so keep the state directory private and outside the
 target repository.
 
-`--plan-only` invokes the selected host and consumes the same persistent call and
-time budget as execution. It creates local state and observation worktrees,
-without implementing or publishing changes. Inspect each issue's plan, candidate
-acceptance criteria, dependencies, and reasons in JSON status output.
+`--plan-only` assesses the whole captured backlog and produces only a global
+phased roadmap. It does not create detailed plans for every issue, implement, or
+publish changes. It invokes the selected host in read-only discovery calls and
+consumes the same persistent call and time budget as execution. Supply the
+current milestone or release objective in the queue configuration, for example:
+
+```json
+{
+  "queue": {
+    "planning_context": "Stabilize CSV imports for the next release before adding export formats.",
+    "planning_max_bytes": 131072
+  }
+}
+```
+
+Planning considers every captured issue body and comment. Inputs that fit in one
+bounded request use a single roadmap call; larger inputs use complete bounded
+assessment chunks before global synthesis. Inputs are not silently truncated.
+An oversized source leaves planning `needs_decision`; a partial assessment leaves
+it `incomplete`. Both report unassessed issue numbers and cannot activate a
+partial roadmap for new work.
+
+Inspect `planning` in JSON status or the compact `--human` view. It records the
+revision, source fingerprint, base commit, assessed and unassessed issue numbers,
+current repository stage, roadmap evidence, stage goals and rationale, entry
+conditions, exit criteria, human acceptance gates, and issue dispositions with
+questions or deferral reasons. A complete durable roadmap is required before
+selecting new work.
 
 ## Run and control a batch
 
@@ -55,16 +80,20 @@ Use `dutyloop issues start --state ../issue-state` instead of `run` for a detach
 runner. Stop is asynchronous; inspect status again to confirm it has stopped.
 A recorded stop cannot be cleared by restarting.
 
-The runner plans captured issues, orders actionable work by priority and
-dependencies, and implements one issue at a time. Each implementation uses the
-mission engine's scope checks, operator verification, and separate review. Local
-issue branches are recorded in status. In local delivery, accepted commits
+The runner follows roadmap stage order and dependencies. It detail-plans only
+the next eligible issue against the current accepted base, then implements,
+runs operator checks, and requests separate review. A later stage cannot skip
+incomplete work in an earlier stage. Stages requiring human acceptance stop new
+work for a concrete operator decision. Textual entry and exit criteria describe
+evidence to assess; they do not establish automated proof of product acceptance.
+Each implementation retains the mission engine's scope and acceptance checks.
+Local issue branches are recorded in status. In local delivery, accepted commits
 accumulate from the batch's `accepted_head`, so later issues can use earlier
 fixes. The operator checkout is not switched or pulled, and its uncommitted
 changes are not copied into worktrees.
 
 `queue.batch_size` limits the distinct issues implemented in one `run`; run again
-to process another group. Planning can cover the whole captured queue. The
+to process another group. Roadmap assessment covers the whole captured queue. The
 invocation budget and first deadline apply to the entire batch across runs,
 including planning, retries, waiting, and downtime. Starting again does not renew
 them. A successful local fix or open PR does not close its GitHub issue.
@@ -135,8 +164,15 @@ available feedback; repository mode continues checking in subsequent passes.
 Issues carrying an excluded label start as `needs_decision`. The planner also
 uses that state for missing business intent, unverifiable acceptance criteria,
 duplicates, or issues that appear already solved. These items are not closed
-automatically. Other actionable issues continue; unmet dependencies remain
-`waiting_dependency`.
+automatically. Other actionable issues can continue within the current eligible
+stage; unmet dependencies remain `waiting_dependency`. A blocked earlier stage
+does not authorize jumping to a later one.
+
+Replanning retains unfinished active-stage obligations until verification or an
+explicit operator decision. If such an issue was closed outside the batch, use
+`resolve` to record whether independent work should proceed with it deferred.
+It remains `external_closed`, with no verified outcome; issues still depending
+on it remain blocked.
 
 Read status and supply a concrete decision when you have one:
 
@@ -172,7 +208,19 @@ implementation, pushes, merges, or closure. Inspect the returned status before
 running again, and reconcile retained work before starting a replacement batch.
 Safety blockers and stop/limit states are not cleared by acknowledgement.
 `completed` means this pass has no further eligible work, not that every captured
-issue is closed.
+issue is closed. Changed captured inputs, operator decisions, or admission
+invalidate the roadmap for new work; base changes also require current-base
+planning. Owned-PR delivery and feedback follow-up can continue while a
+replacement roadmap is incomplete, within their existing authority.
+
+Existing states without a roadmap receive global assessment on their next
+authorized runnable pass. Old detailed plans are replanned against the current
+head before implementation; accepted work, owned PRs, operator decisions and
+spent limits remain recorded. Upgrading does not revive stopped or exhausted
+batches or replay unknown work. For an older batch that already exhausted its
+20-call limit, inspect retained work and delivery effects before initializing a
+separate new state. Use explicit recovery where applicable; recovery does not
+reset limits or clear a recorded stop.
 
 ## Configuration reference
 
@@ -197,6 +245,8 @@ does not change an existing batch.
 | `queue.batch_size` | `10` | Maximum distinct issues implemented per run. |
 | `queue.max_issues` | `500` | Refuse a larger selected backlog rather than silently truncate it. |
 | `queue.max_delivery_attempts` | `2` | Maximum implementation deliveries per issue, including CI repairs. |
+| `queue.planning_max_bytes` | `131072` | Maximum planning input bytes per request; integer from `8192` to `1048576`. Oversized inputs remain explicitly uncovered. |
+| `queue.planning_context` | `""` | Operator context for the current milestone or release objective; at most 20,000 characters. It grants no additional authority. |
 
 ## Claude Code and verification boundaries
 

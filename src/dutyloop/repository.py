@@ -15,7 +15,7 @@ import sqlite3
 import threading
 import time
 
-from . import issues
+from . import backlog_runner, issues
 from .github import GitHubError
 from .issue_store import INCOMPLETE_ISSUES, IssueStore
 from .repository_store import RepositoryStore, encoded, fingerprint, scope_fingerprint
@@ -199,9 +199,19 @@ def set_mode(state_dir, mode):
 
 
 def _work(snapshot):
-    states = {"queued"} if snapshot["intake"]["mode"] == "observe" else {
-        "queued", "planned", "waiting_dependency", "accepted", "pull_request", "merged"}
-    return any(row["state"] in states for row in snapshot["issues"])
+    if backlog_runner.needs_assessment(snapshot):
+        return True
+    if snapshot["intake"]["mode"] == "observe":
+        return False
+    if any(row["state"] in {"accepted", "pull_request", "merged"}
+           or row.get("pr_number") and row["state"] in {"queued", "planned", "waiting_dependency"}
+           for row in snapshot["issues"]):
+        return True
+    planning = snapshot.get("planning") or {}
+    if planning.get("status") == "ready" and planning.get("roadmap"):
+        _, work, _ = backlog_runner.select_work(snapshot)
+        return bool(work)
+    return False
 
 
 def _wait(store, interrupted, until):
@@ -429,7 +439,7 @@ def _executor(store, snapshot):
 
 def status(state_dir):
     store = RepositoryStore(state_dir)
-    snapshot = store.snapshot()
+    snapshot = backlog_runner.present(store.snapshot())
     children = _children(store)
     snapshot["tasks"] = [{"id": f"issue:{row['number']}", "issue_number": row["number"],
                           "state": row["state"], "pr_number": row.get("pr_number"),
@@ -437,6 +447,22 @@ def status(state_dir):
                           "calls": [call for call in snapshot["calls"] if call["issue_number"] == row["number"]]}
                          for row in snapshot["issues"]]
     attention = []
+    planning = snapshot["planning"]
+    if planning["status"] in {"incomplete", "needs_decision", "stale"}:
+        attention.append({"id": "repository:planning", "type": "planning", "reason": planning.get("reason") or planning["status"],
+                          "coverage": planning.get("coverage"), "required_action": "inspect_backlog_assessment"})
+    for item in (planning.get("roadmap") or {}).get("items", []):
+        if item["disposition"] in {"needs_decision", "defer"}:
+            attention.append({"id": f"issue:{item['number']}:roadmap", "type": "planning",
+                              "issue_number": item["number"], "reason": item["reason"],
+                              "question": item.get("question"), "required_action": "inspect_roadmap_disposition"})
+    if planning.get("roadmap"):
+        stage, _, gate = backlog_runner.select_work(snapshot)
+        if stage and gate:
+            attention.append({"id": f"repository:stage:{stage['id']}", "type": "planning",
+                              "reason": gate, "issue_numbers": stage["issue_numbers"],
+                              "question": "; ".join(stage["entry_conditions"]),
+                              "required_action": "inspect_stage_and_resolve_issue_decision"})
     for row in snapshot["issues"]:
         if row["state"] in {"needs_decision", "failed", "waiting_dependency", "interrupted"}:
             attention.append({"id": f"issue:{row['number']}:{row['state']}", "type": row["state"],

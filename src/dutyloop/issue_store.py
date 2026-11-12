@@ -174,6 +174,13 @@ class IssueStore:
                         reason="operator_stop")
             self._save(db, data)
 
+    def save_planning(self, planning):
+        """Persist assessment evidence without changing authority or control state."""
+        with self.connection() as db:
+            data = self._read(db)
+            data["planning"] = planning
+            self._save(db, data)
+
     def update_issue(self, issue_number, state, **fields):
         if {"number", "state", "source"} & fields.keys():
             raise ValueError("Cannot patch reserved issue fields")

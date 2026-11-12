@@ -74,13 +74,20 @@ def validate_issue_spec(spec, state_dir):
             for author in authors):
         raise ValueError("github.review_authors must be GitHub logins")
     queue = spec.get("queue", {})
-    _unknown(queue, {"numbers", "exclude_labels", "batch_size", "max_issues", "max_delivery_attempts"}, "queue")
+    _unknown(queue, {"numbers", "exclude_labels", "batch_size", "max_issues", "max_delivery_attempts",
+                     "planning_context", "planning_max_bytes"}, "queue")
     numbers = queue.get("numbers", [])
     if not isinstance(numbers, list) or any(type(n) is not int or n < 1 for n in numbers) or len(set(numbers)) != len(numbers):
         raise ValueError("queue.numbers must be unique positive issue numbers")
     labels = queue.get("exclude_labels", ["needs-decision", "needs-human"])
     if not isinstance(labels, list) or any(not isinstance(label, str) or not label.strip() for label in labels):
         raise ValueError("exclude_labels must be label names")
+    context = queue.get("planning_context", "")
+    if not isinstance(context, str) or len(context) > 20000:
+        raise ValueError("queue.planning_context must be a string of at most 20000 characters")
+    max_bytes = _number(queue.get("planning_max_bytes", 131072), "planning_max_bytes", 8192, True)
+    if max_bytes > 1048576:
+        raise ValueError("queue.planning_max_bytes must be at most 1048576")
     normalized["github"] = {"repository": repository, "remote": remote, "base_branch": base,
                             "delivery": delivery, "close_issues": close,
                             "required_checks": list(dict.fromkeys(checks)), "merge_method": method,
@@ -91,6 +98,7 @@ def validate_issue_spec(spec, state_dir):
         "batch_size": _number(queue.get("batch_size", 10), "batch_size", 1, True),
         "max_issues": _number(queue.get("max_issues", 500), "max_issues", 1, True),
         "max_delivery_attempts": _number(queue.get("max_delivery_attempts", 2), "max_delivery_attempts", 1, True),
+        "planning_context": context, "planning_max_bytes": max_bytes,
     }
     return normalized
 

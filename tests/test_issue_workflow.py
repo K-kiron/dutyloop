@@ -113,6 +113,49 @@ class Host:
         assert (request.cwd / "CLAUDE.md").read_text() == "Preserve the public API.\n"
         data = json.loads(request.prompt[request.prompt.index('{"authority"'):])
         self.calls.append(request.phase)
+        if data.get("planning_operation") in {"assess", "roadmap"}:
+            entries = data["backlog"]
+            evidence = [{"source": "app.py", "observation": "The fixture requires documented value corrections"}]
+            if data["planning_operation"] == "assess":
+                return DriverResult(payload={
+                    "summary": "Assess the complete fixture backlog", "current_stage": "Correctness fixes",
+                    "evidence": evidence,
+                    "items": [{"number": entry["number"], "source_sha256": entry["source_sha256"],
+                               "assessment": "Inspect, correct, and verify the documented value",
+                               "dependencies": self.dependencies.get(entry["number"], [])} for entry in entries],
+                })
+            items = []
+            for entry in entries:
+                number = entry["number"]
+                decision = (entry.get("state") in {"needs_decision", "failed", "interrupted"}
+                            or number in self.decisions and not entry.get("decision"))
+                excluded = (not entry.get("admitted", True) or entry.get("state") == "external_closed"
+                            or entry.get("reason") == "excluded_label"
+                            or entry.get("source", {}).get("state", "open") != "open")
+                disposition = ("done" if entry.get("verified") else "defer" if excluded
+                               else "needs_decision" if decision else "work")
+                items.append({"number": number, "source_sha256": entry["source_sha256"],
+                              "disposition": disposition,
+                              "reason": "Choose the expected behavior" if decision else "Correct the documented value",
+                              "question": "Choose the expected behavior" if disposition == "needs_decision" else "",
+                              "dependencies": self.dependencies.get(number, []),
+                              "stage_id": "correctness" if disposition == "work" else ""})
+            pending = {item["number"] for item in items if item["disposition"] == "work"}
+            ordered = []
+            while pending:
+                ready = sorted(number for number in pending
+                               if not pending.intersection(self.dependencies.get(number, [])))
+                assert ready, "Fixture dependency graph must be acyclic"
+                ordered.extend(ready)
+                pending.difference_update(ready)
+            stages = [{"id": "correctness", "title": "Correct documented behavior",
+                       "goal": "Implement the captured value corrections", "rationale": "Protect the public API",
+                       "entry_conditions": ["The issue requirements are actionable"],
+                       "exit_criteria": ["All admitted corrections pass their acceptance checks"],
+                       "requires_human_acceptance": False, "issue_numbers": ordered}] if ordered else []
+            return DriverResult(payload={"summary": "Correct the complete fixture backlog in dependency order",
+                                         "current_stage": "Correctness fixes", "evidence": evidence,
+                                         "stages": stages, "items": items})
         if request.phase == "discover":
             number = data["issue"]["number"]
             if number in self.decisions and not data.get("operator_decision"):
@@ -178,7 +221,7 @@ def test_local_backlog_skips_decisions_continues_and_preserves_original(batch):
     assert [row["state"] for row in result["issues"]] == ["accepted_local", "needs_decision", "accepted_local"]
     assert result["status"] == "completed"
     assert result["invocations"] == 7
-    assert host.calls == ["discover"] * 3 + ["implement", "review"] * 2
+    assert host.calls == ["discover"] + ["discover", "implement", "review"] * 2
     assert github.writes == []
     assert git(project, "rev-parse", "HEAD") == original
     assert git(project, "status", "--porcelain") == ""
@@ -189,10 +232,16 @@ def test_local_backlog_skips_decisions_continues_and_preserves_original(batch):
 def test_plan_only_preserves_work_and_global_budget_across_resume(batch):
     _, state, spec, github = batch
     issues.initialize(spec, state, github=github)
-    planned = issues.run(state, driver=Host(), github=github, plan_only=True)
-    assert planned["invocations"] == 3
+    host = Host()
+    planned = issues.run(state, driver=host, github=github, plan_only=True)
+    assert planned["invocations"] == 1
     assert not github.writes
-    assert {row["state"] for row in planned["issues"]} == {"planned", "needs_decision"}
+    assert {row["state"] for row in planned["issues"]} == {"queued", "needs_decision"}
+    assert all(row["plan"] is None for row in planned["issues"])
+    repeated = issues.run(state, driver=host, github=github, plan_only=True)
+    assert repeated["invocations"] == 1 and host.calls == ["discover"]
+    assert repeated["deadline"] == planned["deadline"]
+    assert repeated["planning"]["child_state"] == planned["planning"]["child_state"]
     result = issues.run(state, driver=Host(), github=github)
     assert result["invocations"] == 7
     assert result["deadline"] == planned["deadline"]
@@ -263,7 +312,7 @@ def test_pr_mode_can_resume_after_maintainer_merges_dependency(batch):
     second = issues.run(state, driver=Host(), github=github)
     assert second["issues"][0]["state"] == "delivered"
     assert second["issues"][1]["state"] == "pull_request"
-    assert second["invocations"] == 6
+    assert second["invocations"] == 7
     assert not any(kind == "close" for kind, _ in github.writes)
 
 
@@ -296,21 +345,27 @@ def test_changed_issue_is_retained_for_decision(batch):
     spec["queue"] = {"numbers": [1]}
     issues.initialize(spec, state, github=github)
     github.issues[1]["body"] = "A new requirement"
-    result = issues.run(state, driver=Host(), github=github)
+    host = Host()
+    result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["reason"] == "issue_changed_since_snapshot"
-    assert result["invocations"] == 0
+    assert result["invocations"] == 2
+    assert host.calls == ["discover", "discover"]
+    assert not github.writes
 
 
 def test_global_budget_does_not_reset_per_issue(batch):
     _, state, spec, github = batch
-    spec["limits"]["max_invocations"] = 4
+    spec["limits"]["max_invocations"] = 5
     issues.initialize(spec, state, github=github)
     host = Host()
     result = issues.run(state, driver=host, github=github)
     assert result["status"] == "limited"
     assert result["reason"] == "insufficient_task_budget"
-    assert result["invocations"] == 3
-    assert host.calls == ["discover"] * 3
+    assert result["invocations"] == 4
+    assert host.calls == ["discover", "discover", "implement", "review"]
+    assert result["issues"][0]["state"] == "accepted_local"
+    assert result["issues"][2]["state"] == "queued"
+    assert not github.writes
 
 
 @pytest.mark.parametrize("text", ["Closes #999", "CLOSES: #999", "Fixes example/other#22", "Implemented by Claude",
@@ -319,11 +374,15 @@ def test_publication_rejects_automatic_closing_and_authorship(batch, text):
     _, state, spec, github = batch
     spec["queue"] = {"numbers": [1]}
     issues.initialize(spec, state, github=github)
-    issues.run(state, driver=Host(), github=github, plan_only=True)
-    row = issues.status(state)["issues"][0]
-    row["plan"]["candidates"][0]["acceptance"].append(text)
-    IssueStore(state).update_issue(1, "planned", plan=row["plan"])
-    result = issues.run(state, driver=Host(), github=github)
+
+    class InjectedHost(Host):
+        def run(self, request, should_stop):
+            result = super().run(request, should_stop)
+            if result.payload.get("candidates"):
+                result.payload["candidates"][0]["acceptance"].append(text)
+            return result
+
+    result = issues.run(state, driver=InjectedHost(), github=github)
     runner = issues.IssueRunner(IssueStore(state), Host(), threading.Event(), github)
     with pytest.raises(ValueError, match="Publication metadata"):
         runner.metadata(result["issues"][0])
@@ -339,7 +398,7 @@ def test_operator_decision_requeues_only_selected_issue(batch):
     resolved = issues.run(state, driver=Host(), github=github)
     assert resolved["issues"][0]["state"] == "accepted_local"
     assert resolved["deadline"] == result["deadline"]
-    assert resolved["invocations"] == 4
+    assert resolved["invocations"] == 5
 
 
 def test_changed_requirements_can_be_explicitly_reapproved(batch):
@@ -402,7 +461,7 @@ def test_signal_during_child_implementation_stops_entire_batch(batch):
     result = issues.run(state, driver=host, github=github)
     assert result["status"] == "stopped"
     assert result["stop_requested"]
-    assert host.calls == ["discover"] * 3 + ["implement"]
+    assert host.calls == ["discover", "discover", "implement"]
     assert result["issues"][0]["state"] == "interrupted"
     assert not github.writes
 
@@ -422,7 +481,7 @@ def test_cleanup_unknown_during_planning_preserves_safety_block(batch):
     assert result["reason"] == "worker_cleanup_unconfirmed"
     assert not result["stop_requested"]
     assert result["calls"][0]["state"] == "unknown"
-    child = Store(result["issues"][0]["child_state"]).snapshot()
+    child = Store(result["planning"]["child_state"]).snapshot()
     assert child["status"] == "blocked" and child["reason"] == "worker_cleanup_unconfirmed"
     assert child["runner_pid"] is None
 
@@ -431,10 +490,15 @@ def test_one_call_planning_limit_is_not_mislabeled_as_operator_stop(batch):
     _, state, spec, github = batch
     spec["limits"]["max_invocations"] = 1
     issues.initialize(spec, state, github=github)
-    result = issues.run(state, driver=Host(), github=github)
+    host = Host()
+    result = issues.run(state, driver=host, github=github)
     assert result["status"] == "limited"
     assert not result["stop_requested"]
     assert result["invocations"] == 1
+    assert host.calls == ["discover"]
+    assert result["planning"]["roadmap"]
+    assert all(row["plan"] is None for row in result["issues"])
+    assert not github.writes
 
 
 def test_task_retry_exhaustion_does_not_stop_unrelated_issues(batch):
@@ -500,5 +564,5 @@ def test_batch_size_resume_keeps_budget_and_deadline(batch):
     assert first["invocations"] == 4
     second = issues.run(state, driver=Host(), github=github)
     assert second["deadline"] == first["deadline"]
-    assert second["invocations"] == 6
+    assert second["invocations"] == 7
     assert all(row["state"] == "accepted_local" for row in second["issues"])

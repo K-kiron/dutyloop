@@ -37,6 +37,33 @@ def test_issue_config_defaults_grant_no_publication_authority(issue_spec):
     assert not state.exists()
 
 
+@pytest.mark.parametrize("limit", [True, None, 8191, 1048577, 8192.5])
+def test_planning_input_limit_must_be_a_bounded_integer(issue_spec, limit):
+    spec, state = issue_spec
+    spec["queue"] = {"planning_max_bytes": limit}
+    with pytest.raises(ValueError, match="planning_max_bytes"):
+        validate_issue_spec(spec, state)
+    assert not state.exists()
+
+
+@pytest.mark.parametrize("context", [True, [], "x" * 20001])
+def test_planning_context_must_be_bounded_operator_text(issue_spec, context):
+    spec, state = issue_spec
+    spec["queue"] = {"planning_context": context}
+    with pytest.raises(ValueError, match="planning_context"):
+        validate_issue_spec(spec, state)
+    assert not state.exists()
+
+
+def test_current_milestone_context_does_not_grant_delivery_authority(issue_spec):
+    spec, state = issue_spec
+    spec["queue"] = {"planning_context": "Stabilize the parser before adding exports", "planning_max_bytes": 8192}
+    normalized = validate_issue_spec(spec, state)
+    assert normalized["queue"]["planning_context"] == spec["queue"]["planning_context"]
+    assert normalized["github"]["delivery"] == "local" and normalized["github"]["close_issues"] is False
+    assert not state.exists()
+
+
 @pytest.mark.parametrize("value", ["true", 1, None])
 def test_pr_maintenance_requires_boolean_authority(issue_spec, value):
     spec, state = issue_spec
