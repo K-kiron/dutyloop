@@ -17,6 +17,14 @@ def _engine():
     return engine
 
 
+def _configure_output_streams() -> None:
+    """Keep terminal handling native; pipes and background logs use UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None and not stream.isatty():
+            reconfigure(encoding="utf-8")
+
+
 def error_payload(error: Exception) -> dict:
     return {"ok": False, "error": {"type": type(error).__name__, "message": str(error)}}
 
@@ -322,6 +330,18 @@ def _planning_human_lines(snapshot: dict) -> list[str]:
     lines = [f"Planning: {planning.get('status', 'pending')} "
              f"(revision {planning.get('revision', 0)}; "
              f"assessed {len(coverage.get('assessed', []))}/{coverage.get('total', 0)})"]
+    workers = planning.get("workers", snapshot.get("spec", {}).get("queue", {}).get("planning_workers"))
+    if workers is not None:
+        lines.append(f"Planning workers: up to {workers} for chunk assessments")
+    chunks = planning.get("chunks", [])
+    if chunks:
+        counts = {status: sum(chunk["status"] == status for chunk in chunks)
+                  for status in ("completed", "running", "prepared", "incomplete")}
+        lines.append(f"Planning requests: {counts['completed']}/{len(chunks)} completed; "
+                     f"{counts['running']} running; {counts['prepared']} prepared; {counts['incomplete']} incomplete")
+    if planning.get("reused_assessments"):
+        lines.append(f"Reused assessments: {planning['reused_assessments']} chunks "
+                     f"covering {len(planning.get('reused_issues', []))} issues")
     if planning.get("reason"):
         lines.append(f"Planning reason: {planning['reason']}")
     if coverage.get("unassessed"):
@@ -387,6 +407,7 @@ def _repository_human_status(snapshot: dict) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_output_streams()
     arguments = _parser().parse_args(argv)
     try:
         result = _dispatch(arguments)

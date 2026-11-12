@@ -88,6 +88,10 @@ gates and per-issue decisions visible. Continue only eligible work in the curren
 stage. Stop polling at a terminal
 batch state or when the batch cannot progress without an operator decision.
 
+For concurrent read-only assessment requests, use separate actual workers or
+contexts, each with its own worker_id and context_id and its own claimed request.
+A single worker can instead service requests serially within their deadlines.
+
 For each request, follow its prompt and schema at its exact cwd. Respect its
 deadline and scope. After implementation, have a fresh subagent or conversation
 context call desktop_next with its own identity to claim review. Never claim
@@ -118,6 +122,31 @@ criteria, human gates, questions and deferrals in `issues_status`. Use
 `queue.planning_context` for the operator's current milestone objective and
 `queue.planning_max_bytes` for the request bound. These are shared with native
 execution and do not expand authority.
+
+Chunk assessments use a concurrency ceiling of `queue.planning_workers`
+(default `3`, integer `1`–`8`; `1` is serial). A backlog fitting one prompt keeps
+the single-call roadmap path. Multiple desktop workers need distinct
+`worker_id` and `context_id` values representing their actual host contexts;
+changing identity strings in one context does not create concurrent workers.
+One host worker may service the queued requests serially, subject to the shared
+wall deadline. Native adapters dispatch concurrent assessments automatically.
+Every chunk uses the same frozen base. Out-of-order completions remain bound to
+their source chunks; synthesis waits for complete coverage. Status exposes
+`planning.workers`, `planning.chunks` and `planning.child_states` for progress.
+Parallel assessment does not change the `work_stopped` host declaration or give
+DutyLoop control of desktop-owned tools. Stop and join those tools before
+submitting or cancelling each request.
+
+A detailed planner's question, failed attempt or dependency wait does not by
+itself restart whole-backlog assessment. DutyLoop keeps the roadmap and checks
+live issue states and stage barriers before selecting work. For genuine source,
+admission or operator-decision changes, completed chunks may be reused only when
+all their bindings and the base, authority and milestone context still match;
+the host receives assessment requests for changed chunks and a fresh global
+synthesis request. Changed base, authority or milestone context requires fresh
+chunk assessment.
+Inspect `planning.reused_assessments` and `planning.reused_issues` for the reused
+coverage. This preserves the original budget and does not waive human gates.
 
 Implementation waits for a later `issues_start(name=...)` without that flag and
 a complete current roadmap. Then only the next eligible issue receives a detailed

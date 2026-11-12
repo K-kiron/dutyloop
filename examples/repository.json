@@ -28,6 +28,7 @@
     "max_issues": 500,
     "max_delivery_attempts": 3,
     "planning_max_bytes": 131072,
+    "planning_workers": 3,
     "planning_context": "Finish reliability fixes for the current release before starting new integrations."
   },
   "intake": {"mode": "observe", "poll_seconds": 30}

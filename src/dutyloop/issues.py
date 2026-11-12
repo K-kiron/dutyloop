@@ -328,7 +328,7 @@ class IssueRunner:
                     for planned in checked["items"]:
                         if planned["number"] == number:
                             planned["dependencies"] = result["dependencies"]
-                    backlog.validate_roadmap(checked, backlog_runner.inputs(backlog_runner.current_snapshot(self)))
+                    backlog.validate_dependencies(checked)
                 self.store.update_issue(number, "planned", plan=result, reason=None, plan_base_sha=head,
                                         roadmap_revision=context.get("revision"))
             else:

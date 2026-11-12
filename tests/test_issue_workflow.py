@@ -343,13 +343,17 @@ def test_unknown_closure_is_read_reconciled_without_duplicate_mutation(batch):
 def test_changed_issue_is_retained_for_decision(batch):
     _, state, spec, github = batch
     spec["queue"] = {"numbers": [1]}
-    issues.initialize(spec, state, github=github)
+    captured = issues.initialize(spec, state, github=github)
     github.issues[1]["body"] = "A new requirement"
     host = Host()
     result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["reason"] == "issue_changed_since_snapshot"
-    assert result["invocations"] == 2
-    assert host.calls == ["discover", "discover"]
+    assert result["issues"][0]["state"] == "needs_decision" and result["issues"][0]["plan"] is None
+    assert result["issues"][0]["source"] == captured["issues"][0]["source"]
+    assert result["issues"][0]["source"]["body"] != github.issues[1]["body"]
+    assert result["planning"]["revision"] == 1
+    assert result["invocations"] == 1 and host.calls == ["discover"]
+    assert result["calls"][0]["issue_number"] is None
     assert not github.writes
 
 

@@ -34,7 +34,24 @@ def test_issue_config_defaults_grant_no_publication_authority(issue_spec):
     assert normalized["github"]["review_authors"] == []
     assert normalized["queue"]["numbers"] == []
     assert normalized["queue"]["exclude_labels"] == ["needs-decision", "needs-human"]
+    assert normalized["queue"]["planning_workers"] == 3
     assert not state.exists()
+
+
+@pytest.mark.parametrize("workers", [True, None, 0, 9, 2.5, "3"])
+def test_planning_workers_must_be_a_bounded_integer(issue_spec, workers):
+    spec, state = issue_spec
+    spec["queue"] = {"planning_workers": workers}
+    with pytest.raises(ValueError, match="planning_workers"):
+        validate_issue_spec(spec, state)
+    assert not state.exists()
+
+
+@pytest.mark.parametrize("workers", [1, 8])
+def test_planning_workers_accepts_serial_and_maximum_ceiling(issue_spec, workers):
+    spec, state = issue_spec
+    spec["queue"] = {"planning_workers": workers}
+    assert validate_issue_spec(spec, state)["queue"]["planning_workers"] == workers
 
 
 @pytest.mark.parametrize("limit", [True, None, 8191, 1048577, 8192.5])

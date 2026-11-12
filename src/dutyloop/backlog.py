@@ -135,14 +135,28 @@ def validate_roadmap(payload, entries):
             _nonblank(item["question"])
         if item["disposition"] == "done" and source.get("verified") is not True:
             raise ValueError("A done disposition requires an existing verified outcome")
+    validate_dependencies(payload)
+    return payload
+
+
+def validate_dependencies(payload):
+    """Check a JIT edge change without reinterpreting an authorized roadmap.
+
+    New roadmaps still require validate_roadmap. Runtime blocked siblings stay
+    in their planned stages; next_work enforces their live row states.
+    """
+    stages = {stage["id"]: index for index, stage in enumerate(payload["stages"])}
+    items = {item["number"]: item for item in payload["items"]}
+    for number, item in items.items():
+        if number in item["dependencies"] or len(set(item["dependencies"])) != len(item["dependencies"]):
+            raise ValueError("Issue dependencies must be unique and cannot include the issue itself")
         if item["disposition"] == "work":
             for dependency in item["dependencies"]:
                 other = items.get(dependency)
                 if (other and other["disposition"] == "work"
-                        and stages.get(other["stage_id"], len(stages)) > stages[item["stage_id"]]):
+                        and stages[other["stage_id"]] > stages[item["stage_id"]]):
                     raise ValueError("A roadmap issue cannot depend on a later stage")
     _acyclic(payload["items"])
-    return payload
 
 
 def _checks_pass(checks):

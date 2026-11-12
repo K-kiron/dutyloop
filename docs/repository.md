@@ -62,23 +62,39 @@ objective, and `queue.planning_max_bytes` to bound each planning request:
 {
   "queue": {
     "planning_context": "Finish reliability fixes for the current release before starting new integrations.",
-    "planning_max_bytes": 131072
+    "planning_max_bytes": 131072,
+    "planning_workers": 3
   }
 }
 ```
 
 Planning considers all captured issue bodies and comments. Large inputs are
-assessed in complete bounded chunks, then synthesized into one roadmap. An
+assessed in complete bounded chunks with up to `queue.planning_workers`
+concurrent assessments (default `3`, range `1`–`8`; `1` is serial), then
+synthesized into one roadmap after complete coverage. A backlog fitting one
+serialized prompt still uses one roadmap call. All workers inspect the same
+frozen base and share the existing finite call and wall-time limits. An
 oversized source or partial assessment reports uncovered issue numbers and
 cannot activate a partial roadmap for new work. The
 [issue configuration reference](issues.md#configuration-reference) gives limits.
 
 Status exposes `planning.status`, revision, fingerprint, base, coverage and the
-roadmap. The human view shows assessment counts, the current repository stage,
+roadmap, worker ceiling and per-request progress. The human view shows assessment
+and active/completed request counts, the current repository stage,
 stage issue groups, goals, rationale, entry and exit criteria, human gates,
 questions and deferral reasons. Complete durable coverage is required before
 selecting new work. Changed captured inputs, admission or operator decisions
 invalidate that roadmap and require reassessment.
+
+Runtime questions, failed attempts and dependency waits retain the cached
+assessment while live issue states and stage barriers continue to gate
+execution. This leaves the remaining call budget available for eligible fixes
+instead of repeatedly investigating unchanged inputs. When genuine inputs
+change, the chunked path can reuse only whole completed chunks whose source,
+admission and decision bindings are unchanged on the same base, authority and
+milestone context. Changed chunks are reassessed before a fresh global roadmap;
+base, authority or milestone changes require fresh assessment of every chunk.
+Status reports `planning.reused_assessments` and `planning.reused_issues`.
 
 ## One task across several attempts
 

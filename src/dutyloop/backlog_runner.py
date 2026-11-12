@@ -3,17 +3,34 @@
 from __future__ import annotations
 
 import copy
+import contextvars
 import hashlib
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from pathlib import Path
 
 from . import backlog, engine
 from .store import Store
-from .workspace import assert_identity, fingerprint
+from .workspace import GitCleanupError, assert_identity, fingerprint
 
 
 class _InputLimit(ValueError):
     pass
+
+
+@dataclass
+class _Request:
+    workspace: Path
+    child: Store
+    supervisor: engine.Supervisor
+    operation: str
+    entries: list
+    prompt: str
+    before: str
+    pointer: bytes
+    record: dict
 
 
 def encoded(value):
@@ -47,19 +64,24 @@ def inputs(snapshot):
     return sorted(entries, key=lambda item: item["number"])
 
 
-def source_fingerprint(snapshot, entries=None):
-    entries = inputs(snapshot) if entries is None else entries
-    bindings = [{"number": item["number"], "source_sha256": item["source_sha256"],
-                 "admitted": item["admitted"], "decision": item["decision"],
-                 "decision_id": item["decision_id"],
-                 "constraint": [item["state"], item["reason"]] if item["state"] in {
-                     "needs_decision", "failed", "interrupted", "external_closed"} else None}
-                for item in entries]
+def authority(snapshot):
     spec = snapshot["spec"]
-    return digest({"sources": bindings, "authority": {key: spec.get(key) for key in (
+    return {"authority": {key: spec.get(key) for key in (
         "mission", "constraints", "allowed_paths", "verification", "kinds")},
         "repository": spec["github"]["repository"],
-        "planning_context": spec["queue"].get("planning_context", "")})
+        "planning_context": spec["queue"].get("planning_context", "")}
+
+
+def input_bindings(entries):
+    # Runtime questions/failures constrain live scheduling. They are outcomes
+    # of planning, not new source material that requires another investigation.
+    return {str(item["number"]): digest({key: item[key] for key in (
+        "source_sha256", "admitted", "decision", "decision_id")}) for item in entries}
+
+
+def source_fingerprint(snapshot, entries=None):
+    entries = inputs(snapshot) if entries is None else entries
+    return digest({"sources": input_bindings(entries), **authority(snapshot)})
 
 
 def present(snapshot):
@@ -79,6 +101,7 @@ def present(snapshot):
         state["coverage"] = {"total": len(entries), "assessed": covered,
                              "unassessed": [item["number"] for item in entries if item["number"] not in covered]}
     snapshot["planning"] = state
+    state.setdefault("workers", snapshot["spec"]["queue"].get("planning_workers", 3))
     return snapshot
 
 
@@ -163,7 +186,36 @@ class Planner:
         self.binding = source_fingerprint(self.snapshot, self.entries)
         self.max_bytes = runner.spec["queue"].get("planning_max_bytes", 131072)
         self.context = runner.spec["queue"].get("planning_context", "")
+        self.workers = runner.spec["queue"].get("planning_workers", 3)
         self.state = copy.deepcopy(self.snapshot.get("planning") or {})
+
+    def retain_barrier(self):
+        stage = self.state.get("active_stage")
+        blocked = {row["number"] for row in self.snapshot["issues"]
+                   if row["state"] in {"needs_decision", "failed", "interrupted", "external_closed"}}
+        if stage and blocked.intersection(stage["issue_numbers"]) and not self.state.get("stage_barrier"):
+            self.state["stage_barrier"] = {
+                "stage": stage, "decision_ids": self.state.get("active_stage_decisions", {})}
+            self.save()
+
+    def reusable(self, previous, context):
+        """Reuse whole source-bound chunks only on the same code and authority."""
+        if previous.get("assessment_context_fingerprint") != context:
+            return [], []
+        bindings = input_bindings(self.entries)
+        old = previous.get("input_bindings", {})
+        notes, records = [], []
+        for note in previous.get("assessments", []):
+            numbers = sorted(item["number"] for item in note["items"])
+            if not all(str(number) in bindings and old.get(str(number)) == bindings[str(number)] for number in numbers):
+                continue
+            record = next((record for record in previous.get("chunks", [])
+                           if record["operation"] == "assess" and record["status"] == "completed"
+                           and sorted(record["issue_numbers"]) == numbers), None)
+            if record is not None:
+                notes.append(note)
+                records.append({**record, "id": len(records) + 1, "reused": True})
+        return notes, records
 
     def save(self):
         self.runner.store.save_planning(self.state)
@@ -246,24 +298,44 @@ class Planner:
             raise _InputLimit("issue_exceeds_planning_input_limit")
         return operation, *selected
 
-    def invoke(self, operation, entries, head, *, assessments=None, allow_chunks=False):
+    def prepare(self, operation, entries, head, abort, *, assessments=None, allow_chunks=False):
+        """Allocate Git state and persist child references on the coordinator."""
         runner = self.runner
         workspace, directory = runner.child(None, head, "backlog")
-        self.state.update(status="assessing", child_state=str(directory))
+        record = {"id": len(self.state.setdefault("chunks", [])) + 1, "operation": operation,
+                  "issue_numbers": [entry["number"] for entry in entries],
+                  "child_state": str(directory), "status": "prepared"}
+        self.state["chunks"].append(record)
+        self.state.setdefault("child_states", []).append(str(directory))
+        self.state.update(status="assessing", child_state=str(directory), workers=self.workers)
         self.save()
         child = Store(directory)
         child.begin()
-        supervisor = engine.Supervisor(child, self.budget_driver(runner, None), threading.Event(),
+        supervisor = engine.Supervisor(child, self.budget_driver(runner, None), abort,
                                        should_stop=runner.stopped)
-        before, pointer = fingerprint(workspace), (workspace / ".git").read_bytes()
-        success = False
         try:
             operation, entries, prompt = self.request(supervisor, operation, entries, head,
                                                      assessments=assessments, allow_chunks=allow_chunks)
+            record.update(operation=operation, issue_numbers=[entry["number"] for entry in entries])
+            self.save()
+            return _Request(workspace, child, supervisor, operation, entries, prompt,
+                            fingerprint(workspace), (workspace / ".git").read_bytes(), record)
+        except BaseException:
+            record["status"] = "incomplete"
+            runner.finish_observation(child, False, "backlog_assessment_interrupted")
+            self.save()
+            raise
+
+    def execute(self, request, head):
+        """Only child-local execution and atomic shared call receipts run here."""
+        workspace, child, supervisor = request.workspace, request.child, request.supervisor
+        operation, entries = request.operation, request.entries
+        success = False
+        try:
             schema = backlog.ASSESSMENT_SCHEMA if operation == "assess" else backlog.ROADMAP_SCHEMA
-            result = supervisor.invoke("discover", workspace, prompt, schema)
-            assert_identity(workspace, head, pointer)
-            if fingerprint(workspace) != before:
+            result = supervisor.invoke("discover", workspace, request.prompt, schema)
+            assert_identity(workspace, head, request.pointer)
+            if fingerprint(workspace) != request.before:
                 raise RuntimeError("Backlog planner modified its observation worktree")
             if operation == "assess":
                 backlog.validate_assessment(result, entries)
@@ -272,17 +344,118 @@ class Planner:
             if not any(not item["source"].startswith(("http://", "https://")) for item in result["evidence"]):
                 raise ValueError("Repository assessment requires local source evidence")
             evidence = supervisor.candidate({"key": "backlog-assessment", "title": "Assess repository stage",
-                "kind": runner.spec["kinds"][0], "why": result["summary"], "priority": 3,
+                "kind": self.runner.spec["kinds"][0], "why": result["summary"], "priority": 3,
                 "evidence": result["evidence"], "acceptance": ["Complete source-bound backlog coverage"]}, workspace)
             result["source_receipts"] = evidence["source_receipts"]
             success = True
-            return (operation, result) if allow_chunks else result
-        except BaseException:
-            if child.control()["status"] == "blocked":
-                runner.store.set_status("blocked", child.control()["reason"])
-            raise
+            return result
         finally:
-            runner.finish_observation(child, success, "backlog_assessment_finished" if success else "backlog_assessment_interrupted")
+            self.runner.finish_observation(child, success,
+                "backlog_assessment_finished" if success else "backlog_assessment_interrupted")
+
+    def slots(self):
+        """No workers are in flight when the coordinator calculates admission."""
+        if self.runner.stopped():
+            raise engine._NoDispatch()
+        control = self.runner.store.control()
+        available = self.runner.spec["limits"]["max_invocations"] - control["invocations"]
+        if available <= 0:
+            self.runner.store.set_status("limited", "invocation_limit")
+            raise engine._NoDispatch()
+        return min(self.workers, available)
+
+    def remember(self, payload):
+        notes = [*self.state.get("assessments", []), payload]
+        notes.sort(key=lambda note: min(item["number"] for item in note["items"]))
+        self.state["assessments"] = notes
+        self.coverage(item["number"] for note in notes for item in note["items"])
+        self.state["source_hashes"].update({str(item["number"]): item["source_sha256"]
+                                           for item in payload["items"]})
+        self.save()
+        self.runner.store.event("backlog_chunk_assessed", {"revision": self.state["revision"],
+                                "chunk": len(notes), "coverage": self.state["coverage"]})
+
+    def run_wave(self, requests, head, abort):
+        """Settle every worker, retaining successes even when a sibling fails."""
+        errors, settled = [], set()
+        roadmap = None
+
+        def settle(future, request):
+            nonlocal roadmap
+            settled.add(future)
+            try:
+                payload = future.result()
+            except BaseException as error:
+                request.record["status"] = "incomplete"
+                errors.append(error)
+                abort.set()
+            else:
+                request.record["status"] = "completed"
+                if request.operation == "assess":
+                    self.remember(payload)
+                else:
+                    roadmap = payload
+            self.save()
+
+        with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+            futures = {}
+            try:
+                for request in requests:
+                    request.record["status"] = "running"
+                    # Each copy retains the shared Git deadline/process lease;
+                    # the same Context cannot be entered by multiple threads.
+                    future = pool.submit(contextvars.copy_context().run, self.execute, request, head)
+                    futures[future] = request
+                self.save()
+                for future in as_completed(futures):
+                    settle(future, futures[future])
+            except BaseException as error:
+                errors.append(error)
+                abort.set()
+            finally:
+                for future, request in futures.items():
+                    if future not in settled:
+                        settle(future, request)
+                for request in requests[len(futures):]:
+                    request.record["status"] = "incomplete"
+                    self.runner.finish_observation(request.child, False, "backlog_assessment_interrupted")
+                self.save()
+        # Only the coordinator propagates child failures, after all workers
+        # drain. Never replace an unknown-cleanup block with a protocol error.
+        for request in requests:
+            child = request.child.control()
+            parent = self.runner.store.control()
+            if child["status"] == "blocked" and parent.get("reason") not in {
+                    "worker_cleanup_unconfirmed", "git_cleanup_unconfirmed"}:
+                self.runner.store.set_status("blocked", child["reason"])
+        if errors:
+            # A sibling's ordinary error must not hide a possibly live Git
+            # process from the runner's dedicated cleanup/recovery handler.
+            cleanup = next((error for error in errors if isinstance(error, GitCleanupError)), None)
+            if cleanup is not None:
+                raise cleanup
+            raise next((error for error in errors if not isinstance(error, engine._NoDispatch)), errors[0])
+        return roadmap
+
+    def wave(self, operation, entries, head, *, assessments=None, allow_chunks=False):
+        width = self.slots()
+        requests, abort = [], threading.Event()
+        try:
+            while entries and len(requests) < width:
+                request = self.prepare(operation, entries, head, abort,
+                                       assessments=assessments, allow_chunks=allow_chunks)
+                requests.append(request)
+                if request.operation == "roadmap":
+                    break
+                entries = entries[len(request.entries):]
+                operation = "assess"
+        except BaseException:
+            for request in requests:
+                request.record["status"] = "incomplete"
+                self.runner.finish_observation(request.child, False, "backlog_assessment_interrupted")
+            self.save()
+            raise
+        return self.run_wave(requests, head, abort)
 
     def ensure(self):
         runner = self.runner
@@ -296,9 +469,13 @@ class Planner:
         head = runner.base()
         same = self.state.get("source_fingerprint") == self.binding and self.state.get("expected_head") == head
         if same and self.state.get("status") in {"ready", "needs_decision"}:
+            self.retain_barrier()
             return self.state["status"] == "ready"
         if not same:
             previous = self.state
+            context = digest({"base_sha": head, **authority(self.snapshot)})
+            notes, records = self.reusable(previous, context)
+            reused = {item["number"] for note in notes for item in note["items"]}
             barrier = previous.get("stage_barrier")
             active = previous.get("stage_candidate")
             stage = previous.get("active_stage")
@@ -312,13 +489,25 @@ class Planner:
             if barrier is None:
                 barrier = active
             self.state = {"status": "pending", "revision": previous.get("revision", 0) + 1,
-                          "source_fingerprint": self.binding, "source_hashes": {}, "base_sha": head,
-                          "expected_head": head, "roadmap": None, "assessments": [], "reason": None,
-                          "child_state": None, "stage_barrier": barrier, "stage_candidate": active}
-            self.coverage([])
+                          "source_fingerprint": self.binding,
+                          "source_hashes": {str(entry["number"]): entry["source_sha256"]
+                                            for entry in self.entries if entry["number"] in reused},
+                          "input_bindings": input_bindings(self.entries), "assessment_context_fingerprint": context,
+                          "base_sha": head, "expected_head": head, "roadmap": None,
+                          "assessments": notes, "reason": None, "reused_assessments": len(notes),
+                          "reused_issues": sorted(reused), "child_state": None,
+                          "child_states": [record["child_state"] for record in records],
+                          "chunks": records, "workers": self.workers,
+                          "stage_barrier": barrier, "stage_candidate": active}
+            self.coverage(reused)
             self.save()
             runner.store.event("backlog_planning_started", {"revision": self.state["revision"],
                                "source_fingerprint": self.binding, "base_sha": head, "total": len(self.entries)})
+        # The batch lock and recovery checks precede ensure(). Historical
+        # in-flight labels are interruption evidence, never live workers now.
+        for record in self.state.get("chunks", []):
+            if record["status"] in {"prepared", "running"}:
+                record["status"] = "incomplete"
         try:
             notes = self.state.get("assessments", [])
             covered = {item["number"] for note in notes for item in note["items"]}
@@ -327,24 +516,19 @@ class Planner:
             while pending:
                 if runner.stopped():
                     return False
-                operation, payload = self.invoke(operation, pending, head, allow_chunks=True)
-                if operation == "roadmap":
-                    result = payload
+                result = self.wave(operation, pending, head, allow_chunks=True)
+                if result is not None:
                     break
-                notes.append(payload)
-                self.state["assessments"] = notes
-                covered.update(item["number"] for item in payload["items"])
-                self.coverage(covered)
-                self.state["source_hashes"].update({str(item["number"]): item["source_sha256"]
-                                                    for item in payload["items"]})
-                self.save()
-                runner.store.event("backlog_chunk_assessed", {"revision": self.state["revision"],
-                                   "chunk": len(notes), "coverage": self.state["coverage"]})
+                operation = "assess"
+                notes = self.state["assessments"]
+                covered = set(self.state["coverage"]["assessed"])
                 pending = [entry for entry in pending if entry["number"] not in covered]
             if result is None:
                 brief = [{**entry, "source": {key: entry["source"].get(key) for key in ("number", "title", "state")}}
                          for entry in self.entries]
-                result = self.invoke("roadmap", brief, head, assessments=notes)
+                result = self.wave("roadmap", brief, head, assessments=notes)
+            if runner.stopped():
+                return False
             barrier = self.state.get("stage_barrier")
             active = self.state.pop("stage_candidate", None)
             if barrier and not _pending_stage_members(self.snapshot, barrier, result):
