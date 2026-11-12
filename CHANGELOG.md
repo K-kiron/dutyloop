@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Investigate large backlogs in bounded parallel waves, defaulting to three
+  isolated workers sharing the original call and wall-time budgets. Retain all
+  child receipts and completed chunks on interruption; synthesize only after
+  complete coverage and join workers before returning.
+- Reuse source investigations across runtime questions and failures, keeping
+  live issue and stage gates. Reassess only changed chunks on the same code and
+  authority; new bases or planning authority require fresh investigations.
+- Write redirected CLI output and background logs as UTF-8, including structured
+  error output, rather than failing on Unicode under legacy Windows encodings.
+
 - Assess the complete captured backlog against the current repository stage
   before execution. Persist evidence, phased goals and acceptance gates,
   dependencies, deferred work and human decisions; assess large inputs in

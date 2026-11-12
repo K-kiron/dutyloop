@@ -75,7 +75,7 @@ def test_short_backlog_near_compact_limit_uses_complete_bounded_chunks(batch, mo
     chunks = [request for request in host.requests if request["data"]["planning_operation"] == "assess"]
     assert chunks
     entries = [entry for request in chunks for entry in request["data"]["backlog"]]
-    assert [entry["number"] for entry in entries] == list(range(1, 191))
+    assert sorted(entry["number"] for entry in entries) == list(range(1, 191))
     assert all(entry["source"]["body"] == github.issues[entry["number"]]["body"]
                and entry["source"]["comments"] == github.issues[entry["number"]]["comments"] for entry in entries)
     assert all(request["bytes"] <= limit for request in host.requests)
@@ -94,7 +94,7 @@ def test_chunk_packing_counts_authority_context_and_utf8_bytes(batch):
     chunks = [request for request in host.requests if request["data"]["planning_operation"] == "assess"]
     assert len(chunks) >= 2
     entries = [entry for request in chunks for entry in request["data"]["backlog"]]
-    assert [entry["number"] for entry in entries] == list(range(1, 7))
+    assert sorted(entry["number"] for entry in entries) == list(range(1, 7))
     assert all(entry["source"]["body"] == github.issues[entry["number"]]["body"]
                and entry["source"]["comments"] == github.issues[entry["number"]]["comments"] for entry in entries)
     assert all(request["data"]["authority"]["constraints"] == initialized["spec"]["constraints"]
@@ -124,6 +124,7 @@ def test_oversized_complete_synthesis_retains_assessments_without_dispatch(batch
 def test_chunk_resume_keeps_finished_notes_and_only_reassesses_unfinished_sources(batch):
     _, state, spec, github = batch
     large_sources(spec, github)
+    spec["queue"]["planning_workers"] = 1
     issues.initialize(spec, state, github=github)
     host = BoundedHost(cancel_second_chunk=True)
     first = issues.run(state, driver=host, github=github, plan_only=True)

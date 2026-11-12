@@ -48,24 +48,60 @@ current milestone or release objective in the queue configuration, for example:
 {
   "queue": {
     "planning_context": "Stabilize CSV imports for the next release before adding export formats.",
-    "planning_max_bytes": 131072
+    "planning_max_bytes": 131072,
+    "planning_workers": 3
   }
 }
 ```
 
 Planning considers every captured issue body and comment. Inputs that fit in one
 bounded request use a single roadmap call; larger inputs use complete bounded
-assessment chunks before global synthesis. Inputs are not silently truncated.
+assessment chunks before global synthesis. `queue.planning_workers` limits
+concurrent chunk assessments to three by default; use `1` for serial assessment
+or choose an integer up to `8`. It does not force extra calls when the backlog
+fits one serialized prompt. Native adapters dispatch these assessments
+automatically. Each wave uses the same frozen repository head and at most the
+smaller of the worker ceiling and remaining shared call slots.
+
+Chunks can finish out of order; successful results are retained and ordered
+deterministically for synthesis. All required chunks must complete before the
+single global synthesis call. Cancellation waits for in-flight coordinator work
+to finish; desktop hosts must also stop their own external work as described in
+the [handoff guide](desktop.md). Interrupted waves retain completed siblings but
+cannot synthesize incomplete coverage. All assessments and synthesis share the
+original invocation and wall-time limits; implementation remains serial.
+Inputs are not silently truncated.
 An oversized source leaves planning `needs_decision`; a partial assessment leaves
 it `incomplete`. Both report unassessed issue numbers and cannot activate a
 partial roadmap for new work.
+
+Runtime outcomes such as a detailed planner's question, a failed attempt or a
+dependency wait keep the existing repository assessment and stage structure.
+Their live issue states still block affected work and later stages; independent
+eligible work in the current stage can continue. A local outcome alone does not
+spend the budget on another whole-backlog investigation.
+
+Changed captured sources, admission or operator decisions require a fresh global
+roadmap. In the chunked path, a completed assessment can be reused only when
+every issue in that chunk has the same source, admission and decision bindings,
+and the repository base, operator authority and milestone context are unchanged.
+A changed member causes its whole chunk to be reassessed before global
+synthesis. Base, authority or milestone changes require fresh assessments for
+all chunks. Older records missing reuse bindings receive a fresh assessment;
+reuse never approves execution or renews the budget.
 
 Inspect `planning` in JSON status or the compact `--human` view. It records the
 revision, source fingerprint, base commit, assessed and unassessed issue numbers,
 current repository stage, roadmap evidence, stage goals and rationale, entry
 conditions, exit criteria, human acceptance gates, and issue dispositions with
 questions or deferral reasons. A complete durable roadmap is required before
-selecting new work.
+selecting new work. `planning.workers` records the configured ceiling;
+`planning.chunks` records each request's ID, operation, issue numbers, child
+state and status (`prepared`, `running`, `completed` or `incomplete`). The human
+view summarizes completed and active requests. `planning.child_states` retains
+all child state paths for the revision; `child_state` remains available for
+compatibility. `planning.reused_assessments` and `planning.reused_issues` identify
+coverage carried from completed chunks into a new revision.
 
 ## Run and control a batch
 
@@ -210,8 +246,10 @@ Safety blockers and stop/limit states are not cleared by acknowledgement.
 `completed` means this pass has no further eligible work, not that every captured
 issue is closed. Changed captured inputs, operator decisions, or admission
 invalidate the roadmap for new work; base changes also require current-base
-planning. Owned-PR delivery and feedback follow-up can continue while a
-replacement roadmap is incomplete, within their existing authority.
+planning. Eligible unchanged chunks may be reused under the conditions above;
+the updated backlog still receives global synthesis. Owned-PR delivery and
+feedback follow-up can continue while a replacement roadmap is incomplete,
+within their existing authority.
 
 Existing states without a roadmap receive global assessment on their next
 authorized runnable pass. Old detailed plans are replanned against the current
@@ -246,6 +284,7 @@ does not change an existing batch.
 | `queue.max_issues` | `500` | Refuse a larger selected backlog rather than silently truncate it. |
 | `queue.max_delivery_attempts` | `2` | Maximum implementation deliveries per issue, including CI repairs. |
 | `queue.planning_max_bytes` | `131072` | Maximum serialized planning prompt bytes, including authority and context; integer from `8192` to `1048576`. Host protocol and schema overhead are additional. Oversized inputs cannot activate a partial roadmap. |
+| `queue.planning_workers` | `3` | Concurrent chunk assessment ceiling; integer from `1` to `8`. `1` is serial. A backlog fitting one prompt still uses one roadmap call. |
 | `queue.planning_context` | `""` | Operator context for the current milestone or release objective; at most 20,000 characters. It grants no additional authority. |
 
 ## Claude Code and verification boundaries

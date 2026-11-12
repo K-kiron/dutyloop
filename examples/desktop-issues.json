@@ -31,6 +31,7 @@
     "exclude_labels": ["needs-decision", "needs-human"],
     "batch_size": 10,
     "max_issues": 500,
-    "max_delivery_attempts": 2
+    "max_delivery_attempts": 2,
+    "planning_workers": 3
   }
 }

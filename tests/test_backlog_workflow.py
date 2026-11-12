@@ -297,7 +297,8 @@ def test_unresolved_foundation_survives_replanning_and_new_intake_until_explicit
     assert host.detailed()[0]["data"]["issue"]["number"] == 1
     assert not any(request["phase"] == "implement" for request in host.requests)
     assert blocked["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [1]
-    assert [item["id"] for item in blocked["planning"]["roadmap"]["stages"]] == ["expansion"]
+    assert [item["id"] for item in blocked["planning"]["roadmap"]["stages"]] == ["foundation", "expansion"]
+    assert len(host.planning()) == 1
     current, work, gate = backlog_runner.select_work(blocked)
     assert current["id"] == "foundation" and work == [] and gate == "stage_has_no_runnable_work"
 
@@ -371,7 +372,8 @@ def test_failed_foundation_cannot_be_removed_by_an_automatic_replacement_roadmap
     assert [request["data"]["task"]["key"] for request in host.requests
             if request["phase"] == "implement"] == ["issue-1"]
     assert next(row for row in result["issues"] if row["number"] == 1)["state"] == "failed"
-    assert [item["id"] for item in result["planning"]["roadmap"]["stages"]] == ["expansion"]
+    assert [item["id"] for item in result["planning"]["roadmap"]["stages"]] == ["foundation", "expansion"]
+    assert len(host.planning()) == 1
     assert result["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [1]
     current, work, gate = backlog_runner.select_work(result)
     assert current["id"] == "foundation" and work == [] and gate == "stage_has_no_runnable_work"
@@ -574,7 +576,8 @@ def test_fresh_decision_cannot_retire_obligation_before_replacement_keeps_it_as_
     host = ReorderingHost(foundation=1)
     blocked = issues.run(state, driver=host, github=github)
     assert blocked["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [1]
-    assert next(item for item in blocked["planning"]["roadmap"]["items"] if item["number"] == 1)["disposition"] == "needs_decision"
+    assert next(item for item in blocked["planning"]["roadmap"]["items"] if item["number"] == 1)["disposition"] == "work"
+    assert len(host.planning()) == 1
     issues.resolve(state, 1, "Implement the first foundation requirement before independent expansion", github=github)
     result = issues.run(state, driver=host, github=github)
     implemented = [request["data"]["task"]["key"] for request in host.requests if request["phase"] == "implement"]

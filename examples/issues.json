@@ -32,6 +32,7 @@
     "max_issues": 500,
     "max_delivery_attempts": 2,
     "planning_max_bytes": 131072,
+    "planning_workers": 3,
     "planning_context": "Stabilize documented behavior for the next release before adding new features."
   }
 }
