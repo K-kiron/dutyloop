@@ -112,6 +112,15 @@ def stage_context(runner, number):
             "instruction": "Stage context organizes the original issue; it grants no new scope or verification authority."}
 
 
+def _pending_stage_members(snapshot, barrier, roadmap):
+    rows = {row["number"]: row for row in snapshot["issues"]}
+    items = {item["number"]: item for item in (roadmap or {}).get("items", [])}
+    return [number for number in barrier["stage"]["issue_numbers"]
+            if not backlog.verified(rows.get(number), snapshot["spec"]["github"]["delivery"])
+            and (rows.get(number, {}).get("decision_id") == barrier["decision_ids"].get(str(number))
+                 or items.get(number, {}).get("disposition", "work") == "work")]
+
+
 def select_work(snapshot):
     """A replacement roadmap cannot silently discard an unfinished active phase."""
     state = snapshot.get("planning") or {}
@@ -122,11 +131,7 @@ def select_work(snapshot):
     barrier = state.get("stage_barrier")
     if barrier:
         rows = {row["number"]: row for row in snapshot["issues"]}
-        items = {item["number"]: item for item in roadmap["items"]}
-        pending = [number for number in barrier["stage"]["issue_numbers"]
-                   if not backlog.verified(rows.get(number), snapshot["spec"]["github"]["delivery"])
-                   and (rows.get(number, {}).get("decision_id") == barrier["decision_ids"].get(str(number))
-                        or items[number]["disposition"] == "work")]
+        pending = _pending_stage_members(snapshot, barrier, roadmap)
         if pending:
             human = barrier["stage"]["requires_human_acceptance"] and any(
                 rows.get(number, {}).get("decision_id") == barrier["decision_ids"].get(str(number)) for number in pending)
@@ -175,16 +180,7 @@ class Planner:
         self.runner.store.event("backlog_planning_needs_decision", {"reason": reason, "coverage": self.state["coverage"]})
         return False
 
-    def invoke(self, operation, entries, head, *, assessments=None):
-        runner = self.runner
-        workspace, directory = runner.child(None, head, "backlog")
-        self.state.update(status="assessing", child_state=str(directory))
-        self.save()
-        child = Store(directory)
-        child.begin()
-        supervisor = engine.Supervisor(child, self.budget_driver(runner, None), threading.Event(),
-                                       should_stop=runner.stopped)
-        before, pointer = fingerprint(workspace), (workspace / ".git").read_bytes()
+    def prompt(self, supervisor, operation, entries, head, *, assessments=None):
         instruction = (
             "Assess the current repository stage against committed code, project instructions, tests and documentation, "
             "then analyze the COMPLETE captured backlog before choosing work. Inspect actual project files; "
@@ -203,7 +199,6 @@ class Planner:
                 "issue, retaining its acceptance constraints and dependencies for later global synthesis. "
                 "Keep each assessment concise (at most 1200 characters); do not discard missing decisions."
             )
-            schema = backlog.ASSESSMENT_SCHEMA
         else:
             instruction += (
                 "Produce a coherent phased roadmap, not a priority-sorted list. Ground current_stage and stage order "
@@ -221,14 +216,51 @@ class Planner:
                 "Do not invent commands or alter acceptance policy. Use full sources when provided; synthesis "
                 "notes cover all sources and must be considered together with current code and supplied progress."
             )
-            schema = backlog.ROADMAP_SCHEMA
+        return supervisor.prompt(instruction, planning_operation=operation, planning_context=self.context,
+                                 backlog=entries, assessments=assessments or [],
+                                 repository_base_sha=head, coverage=self.state["coverage"])
+
+    def request(self, supervisor, operation, entries, head, *, assessments=None, allow_chunks=False):
+        """Choose complete sources using the exact prompt that will be dispatched."""
+        prompt = self.prompt(supervisor, operation, entries, head, assessments=assessments)
+        if len(prompt.encode("utf-8")) <= self.max_bytes:
+            return operation, entries, prompt
+        if not allow_chunks:
+            reason = ("synthesis_exceeds_planning_input_limit" if assessments is not None
+                      else "planning_request_exceeds_input_limit")
+            raise _InputLimit(reason)
+        operation = "assess"
+        if len(self.prompt(supervisor, operation, [], head).encode("utf-8")) > self.max_bytes:
+            raise _InputLimit("planning_context_exceeds_input_limit")
+        # Prefix sizes are monotonic: each additional entry adds complete JSON.
+        low, high, selected = 1, len(entries), None
+        while low <= high:
+            count = (low + high) // 2
+            prompt = self.prompt(supervisor, operation, entries[:count], head)
+            if len(prompt.encode("utf-8")) <= self.max_bytes:
+                selected = entries[:count], prompt
+                low = count + 1
+            else:
+                high = count - 1
+        if selected is None:
+            raise _InputLimit("issue_exceeds_planning_input_limit")
+        return operation, *selected
+
+    def invoke(self, operation, entries, head, *, assessments=None, allow_chunks=False):
+        runner = self.runner
+        workspace, directory = runner.child(None, head, "backlog")
+        self.state.update(status="assessing", child_state=str(directory))
+        self.save()
+        child = Store(directory)
+        child.begin()
+        supervisor = engine.Supervisor(child, self.budget_driver(runner, None), threading.Event(),
+                                       should_stop=runner.stopped)
+        before, pointer = fingerprint(workspace), (workspace / ".git").read_bytes()
         success = False
         try:
-            prompt = supervisor.prompt(instruction, planning_operation=operation, planning_context=self.context,
-                                       backlog=entries, assessments=assessments or [],
-                                       repository_base_sha=head, coverage=self.state["coverage"])
-            if len(prompt.encode("utf-8")) > self.max_bytes:
-                raise _InputLimit("Complete planning request exceeds queue.planning_max_bytes")
+            operation, entries, prompt = self.request(supervisor, operation, entries, head,
+                                                     assessments=assessments, allow_chunks=allow_chunks)
+            schema = backlog.ASSESSMENT_SCHEMA if operation == "assess" else backlog.ROADMAP_SCHEMA
             result = supervisor.invoke("discover", workspace, prompt, schema)
             assert_identity(workspace, head, pointer)
             if fingerprint(workspace) != before:
@@ -244,7 +276,7 @@ class Planner:
                 "evidence": result["evidence"], "acceptance": ["Complete source-bound backlog coverage"]}, workspace)
             result["source_receipts"] = evidence["source_receipts"]
             success = True
-            return result
+            return (operation, result) if allow_chunks else result
         except BaseException:
             if child.control()["status"] == "blocked":
                 runner.store.set_status("blocked", child.control()["reason"])
@@ -268,58 +300,58 @@ class Planner:
         if not same:
             previous = self.state
             barrier = previous.get("stage_barrier")
-            if barrier is None and previous.get("active_stage_id") and previous.get("roadmap"):
+            active = previous.get("stage_candidate")
+            stage = previous.get("active_stage")
+            if stage is None and previous.get("active_stage_id") and previous.get("roadmap"):
                 stage = next((stage for stage in previous["roadmap"]["stages"]
                               if stage["id"] == previous["active_stage_id"]), None)
-                rows = {row["number"]: row for row in self.snapshot["issues"]}
-                if stage and any(not backlog.verified(rows.get(number), runner.spec["github"]["delivery"])
-                                 for number in stage["issue_numbers"]):
-                    barrier = {"stage": stage, "decision_ids": previous.get("active_stage_decisions", {})}
+            if stage:
+                active = {"stage": stage, "decision_ids": previous.get("active_stage_decisions", {})}
+            # Keep both obligations while assessing. A fresh decision cannot
+            # release an old stage based on the roadmap that predates it.
+            if barrier is None:
+                barrier = active
             self.state = {"status": "pending", "revision": previous.get("revision", 0) + 1,
                           "source_fingerprint": self.binding, "source_hashes": {}, "base_sha": head,
                           "expected_head": head, "roadmap": None, "assessments": [], "reason": None,
-                          "child_state": None, "stage_barrier": barrier}
+                          "child_state": None, "stage_barrier": barrier, "stage_candidate": active}
             self.coverage([])
             self.save()
             runner.store.event("backlog_planning_started", {"revision": self.state["revision"],
                                "source_fingerprint": self.binding, "base_sha": head, "total": len(self.entries)})
-        # Leave room for the authority prompt, context and structured synthesis.
-        allowance = self.max_bytes - len(encoded(self.context).encode("utf-8")) - 6000
-        if allowance <= 0:
-            return self.unavailable("planning_context_exceeds_input_limit")
         try:
-            if len(encoded(self.entries).encode("utf-8")) <= allowance:
-                result = self.invoke("roadmap", self.entries, head)
-            else:
-                chunks, chunk = [], []
-                for entry in self.entries:
-                    if len(encoded([entry]).encode("utf-8")) > allowance:
-                        return self.unavailable("issue_exceeds_planning_input_limit")
-                    if chunk and len(encoded([*chunk, entry]).encode("utf-8")) > allowance:
-                        chunks.append(chunk)
-                        chunk = []
-                    chunk.append(entry)
-                if chunk:
-                    chunks.append(chunk)
-                notes = self.state.get("assessments", [])
-                for index, chunk in enumerate(chunks):
-                    if index < len(notes):
-                        continue
-                    if runner.stopped():
-                        return False
-                    assessment = self.invoke("assess", chunk, head)
-                    notes.append(assessment)
-                    self.state["assessments"] = notes
-                    self.coverage(item["number"] for note in notes for item in note["items"])
-                    self.state["source_hashes"].update({str(item["number"]): item["source_sha256"] for item in chunk})
-                    self.save()
-                    runner.store.event("backlog_chunk_assessed", {"revision": self.state["revision"],
-                                       "chunk": index + 1, "coverage": self.state["coverage"]})
+            notes = self.state.get("assessments", [])
+            covered = {item["number"] for note in notes for item in note["items"]}
+            pending = [entry for entry in self.entries if entry["number"] not in covered]
+            operation, result = "assess" if notes else "roadmap", None
+            while pending:
+                if runner.stopped():
+                    return False
+                operation, payload = self.invoke(operation, pending, head, allow_chunks=True)
+                if operation == "roadmap":
+                    result = payload
+                    break
+                notes.append(payload)
+                self.state["assessments"] = notes
+                covered.update(item["number"] for item in payload["items"])
+                self.coverage(covered)
+                self.state["source_hashes"].update({str(item["number"]): item["source_sha256"]
+                                                    for item in payload["items"]})
+                self.save()
+                runner.store.event("backlog_chunk_assessed", {"revision": self.state["revision"],
+                                   "chunk": len(notes), "coverage": self.state["coverage"]})
+                pending = [entry for entry in pending if entry["number"] not in covered]
+            if result is None:
                 brief = [{**entry, "source": {key: entry["source"].get(key) for key in ("number", "title", "state")}}
                          for entry in self.entries]
-                if len(encoded({"backlog": brief, "assessments": notes}).encode("utf-8")) > allowance:
-                    return self.unavailable("synthesis_exceeds_planning_input_limit")
                 result = self.invoke("roadmap", brief, head, assessments=notes)
+            barrier = self.state.get("stage_barrier")
+            active = self.state.pop("stage_candidate", None)
+            if barrier and not _pending_stage_members(self.snapshot, barrier, result):
+                barrier = None
+            if barrier is None and active and _pending_stage_members(self.snapshot, active, result):
+                barrier = active
+            self.state["stage_barrier"] = barrier
             self.coverage(item["number"] for item in result["items"])
             self.state["source_hashes"] = {str(entry["number"]): entry["source_sha256"] for entry in self.entries}
             # A global question can pause an admitted issue but cannot grant authority.
@@ -334,8 +366,8 @@ class Planner:
             runner.store.event("backlog_roadmap_ready", {"revision": self.state["revision"],
                                "coverage": self.state["coverage"], "stages": result["stages"]})
             return True
-        except _InputLimit:
-            return self.unavailable("planning_request_exceeds_input_limit")
+        except _InputLimit as error:
+            return self.unavailable(str(error))
         except engine._NoDispatch:
             return False
         finally:

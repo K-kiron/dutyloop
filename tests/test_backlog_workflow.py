@@ -490,3 +490,96 @@ def test_explicit_closed_stage_decision_releases_independent_work_without_verify
                    for event in issues.events(state, limit=1000)["events"])
     assert planned["accepted_head"] == planned["base_sha"]
     assert git(project, "show", "HEAD:app.py") == "value = 0" and github.writes == []
+
+
+@pytest.mark.parametrize("first_stage_outcome", ["verified", "explicitly-deferred"])
+def test_released_first_barrier_does_not_erase_the_next_unfinished_active_stage(batch, first_stage_outcome):
+    from dutyloop import backlog_runner
+
+    _, state, spec, github = batch
+    populate(github, 3)
+    issues.initialize(spec, state, github=github)
+
+    class ThreeStageHost(PortfolioHost):
+        def run(self, request, should_stop):
+            result = super().run(request, should_stop)
+            data = self.requests[-1]["data"]
+            if data.get("planning_operation") == "roadmap":
+                first = next(entry for entry in data["backlog"] if entry["number"] == 1)
+                if first.get("decision_id") and first_stage_outcome == "explicitly-deferred":
+                    item = next(item for item in result.payload["items"] if item["number"] == 1)
+                    item.update(disposition="defer", reason="The operator explicitly deferred the first stage",
+                                question="", stage_id="")
+                result.payload["stages"] = []
+                for number, identifier in ((1, "foundation"), (2, "second"), (3, "third")):
+                    item = next(item for item in result.payload["items"] if item["number"] == number)
+                    if item["disposition"] == "work":
+                        item["stage_id"] = identifier
+                        result.payload["stages"].append(stage(identifier, [number]))
+            elif request.phase == "discover":
+                number = data["issue"]["number"]
+                if number == 2 or number == 1 and not data.get("operator_decision"):
+                    return DriverResult(payload={"status": "needs_decision", "summary": f"Choose behavior for stage {number}",
+                                                 "dependencies": [], "candidates": []})
+            return result
+
+    host = ThreeStageHost(foundation=1)
+    first = issues.run(state, driver=host, github=github)
+    assert first["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [1]
+    assert not any(request["phase"] == "implement" for request in host.requests)
+    decision = ("Preserve the API and implement the first foundation requirement" if first_stage_outcome == "verified"
+                else "Explicitly defer the first foundation requirement and proceed to the second stage")
+    resolved = issues.resolve(state, 1, decision, github=github)
+    assert resolved["issues"][0]["decision_id"]
+    second = issues.run(state, driver=host, github=github)
+    implemented = [request["data"]["task"]["key"] for request in host.requests if request["phase"] == "implement"]
+    assert "issue-3" not in implemented
+    assert implemented == (["issue-1"] if first_stage_outcome == "verified" else [])
+    assert next(row for row in second["issues"] if row["number"] == 2)["state"] == "needs_decision"
+    assert second["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [2]
+    current, work, gate = backlog_runner.select_work(second)
+    assert current["id"] == "second" and work == [] and gate == "stage_has_no_runnable_work"
+    completed = [event["data"]["stage_id"] for event in issues.events(state, limit=1000)["events"]
+                 if event["kind"] == "backlog_stage_completed"]
+    assert "second" not in completed
+    if first_stage_outcome == "explicitly-deferred":
+        assert "foundation" not in completed
+    assert github.writes == []
+
+
+def test_fresh_decision_cannot_retire_obligation_before_replacement_keeps_it_as_work(batch):
+    from dutyloop import backlog_runner
+
+    _, state, spec, github = batch
+    github.issues = {number: workflow.source(number) for number in (1, 3)}
+    spec["queue"] = {"batch_size": 1}
+    issues.initialize(spec, state, github=github)
+
+    class ReorderingHost(PortfolioHost):
+        def run(self, request, should_stop):
+            result = super().run(request, should_stop)
+            data = self.requests[-1]["data"]
+            if data.get("planning_operation") == "roadmap":
+                first = next(entry for entry in data["backlog"] if entry["number"] == 1)
+                if first.get("decision_id"):
+                    # The fresh decision still requires work on #1; it is not a
+                    # waiver merely because the previous roadmap asked a question.
+                    assert next(item for item in result.payload["items"] if item["number"] == 1)["disposition"] == "work"
+                    result.payload["stages"] = [stage("expansion", [3]), stage("foundation", [1])]
+            elif request.phase == "discover" and data["issue"]["number"] == 1 and not data.get("operator_decision"):
+                return DriverResult(payload={"status": "needs_decision", "summary": "Choose the foundational behavior",
+                                             "dependencies": [], "candidates": []})
+            return result
+
+    host = ReorderingHost(foundation=1)
+    blocked = issues.run(state, driver=host, github=github)
+    assert blocked["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [1]
+    assert next(item for item in blocked["planning"]["roadmap"]["items"] if item["number"] == 1)["disposition"] == "needs_decision"
+    issues.resolve(state, 1, "Implement the first foundation requirement before independent expansion", github=github)
+    result = issues.run(state, driver=host, github=github)
+    implemented = [request["data"]["task"]["key"] for request in host.requests if request["phase"] == "implement"]
+    assert "issue-3" not in implemented
+    assert result["planning"]["stage_barrier"]["stage"]["issue_numbers"] == [1]
+    current, work, gate = backlog_runner.select_work(result)
+    assert current["id"] == "foundation" and work == [] and gate == "stage_has_no_runnable_work"
+    assert github.writes == []

@@ -42,6 +42,18 @@ the prompt was clarified to omit conceptual stages without actionable work.
 The passing fixture does not establish reliable planning quality, live backlog
 effectiveness, desktop execution, or product acceptance.
 
+The complete local Windows suite passed 645 tests and 48 subtests, with one
+skip, in 1454.48 seconds before the final review fixes. Subsequent targeted
+regressions reproduced and fixed two additional cases: retaining a released
+first-stage barrier must not erase the next active stage's obligations, and
+request sizing must measure the complete serialized prompt rather than compact
+source estimates. The latter also covers Unicode authority context, bounded
+synthesis and resuming complete assessment notes. After these fixes, the full
+planning/workflow/configuration subset passed 125 tests in 127.95 seconds; Ruff,
+source compilation, source/wheel builds and a fresh installed-wheel smoke check
+also passed. Read the associated pull request's checks for final-commit
+cross-platform results.
+
 ## Repository coordination evidence on 2026-11-10
 
 Repository fixtures exercise incremental admission and observation, repeat-poll

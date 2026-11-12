@@ -245,7 +245,7 @@ does not change an existing batch.
 | `queue.batch_size` | `10` | Maximum distinct issues implemented per run. |
 | `queue.max_issues` | `500` | Refuse a larger selected backlog rather than silently truncate it. |
 | `queue.max_delivery_attempts` | `2` | Maximum implementation deliveries per issue, including CI repairs. |
-| `queue.planning_max_bytes` | `131072` | Maximum planning input bytes per request; integer from `8192` to `1048576`. Oversized inputs remain explicitly uncovered. |
+| `queue.planning_max_bytes` | `131072` | Maximum serialized planning prompt bytes, including authority and context; integer from `8192` to `1048576`. Host protocol and schema overhead are additional. Oversized inputs cannot activate a partial roadmap. |
 | `queue.planning_context` | `""` | Operator context for the current milestone or release objective; at most 20,000 characters. It grants no additional authority. |
 
 ## Claude Code and verification boundaries
