@@ -98,8 +98,11 @@ def test_current_host_completes_backlog_through_operator_acceptance(batch, monke
         assert not errors
         row = results[0]["issues"][0]
         assert row["state"] == ("failed" if fail_gate else "accepted_local")
-        assert host.calls == (["discover", "discover", "implement", "discover"] if fail_gate
+        assert host.calls == (["discover", "discover", "implement"] if fail_gate
                               else ["discover", "discover", "implement", "review"])
+        assert results[0]["planning"]["revision"] == 1
+        assert sum(call["issue_number"] is None for call in results[0]["calls"]) == 1
+        assert results[0]["invocations"] == len(host.calls)
         assert git(project, "rev-parse", "HEAD") == before
         assert (project / "app.py").read_text() == "value = 0\n"
         assert github.writes == []

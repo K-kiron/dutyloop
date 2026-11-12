@@ -91,13 +91,18 @@ def test_trusted_review_feedback_is_reassessed_and_repaired_once_on_owned_pr(bat
 @pytest.mark.parametrize("verdict,expected", [("needs_decision", "needs_decision"), ("no_work", "pull_request")])
 def test_ambiguous_or_nonactionable_feedback_never_enters_implementation(batch, verdict, expected):
     state, github, first = published(batch)
+    before = issues.status(state)
     github.feedback = [feedback(body="Choose a new public behavior", head=first["head"])]
     host = FeedbackHost(verdict)
     result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["state"] == expected
     assert result["issues"][0]["head"] == first["head"]
-    assert host.calls == ["discover"] * (2 if verdict == "needs_decision" else 1)
+    assert host.calls == ["discover"] and not host.repair_plans
     assert len(host.assessments) == 1
+    assert result["invocations"] == before["invocations"] + 1
+    assert result["planning"]["revision"] == before["planning"]["revision"]
+    assert result["issues"][0]["branch"] == first["branch"]
+    assert result["issues"][0]["pr_number"] == first["pr_number"]
     assert github.writes == [("create", 100)]
     if verdict == "no_work":
         resumed = issues.run(state, driver=host, github=github)
@@ -132,10 +137,13 @@ def test_explicit_bot_author_allowlist_permits_bounded_reassessment(batch):
     github.feedback = [feedback(association="NONE", author=actor, head=first["head"])]
     host = FeedbackHost("needs_decision")
     result = issues.run(state, driver=host, github=github)
-    assert host.calls == ["discover", "discover"] and len(host.assessments) == 1
-    assert result["invocations"] == before["invocations"] + 2
+    assert host.calls == ["discover"] and len(host.assessments) == 1 and not host.repair_plans
+    assert result["invocations"] == before["invocations"] + 1
+    assert result["planning"]["revision"] == before["planning"]["revision"]
     assert result["issues"][0]["state"] == "needs_decision"
     assert result["issues"][0]["head"] == first["head"]
+    assert result["issues"][0]["branch"] == first["branch"]
+    assert result["issues"][0]["pr_number"] == first["pr_number"]
     assert github.writes == [("create", 100)]
 
 
@@ -154,11 +162,19 @@ def test_review_retry_limit_stops_repeated_new_feedback_without_merge(batch):
     state, github, first = published(batch)
     store = IssueStore(state)
     store.update_issue(1, "pull_request", delivery_attempts=2)
+    before = issues.status(state)
     github.feedback = [feedback(head=first["head"])]
     host = FeedbackHost()
     result = issues.run(state, driver=host, github=github)
     assert result["issues"][0]["reason"] == "pr_retry_limit"
-    assert host.calls == ["discover"] and not host.assessments and not host.repair_plans
+    assert host.calls == [] and not host.assessments and not host.repair_plans
+    assert result["invocations"] == before["invocations"]
+    assert result["planning"]["revision"] == before["planning"]["revision"]
+    assert result["issues"][0]["state"] == "failed" and result["issues"][0]["delivery_attempts"] == 2
+    assert result["issues"][0]["head"] == first["head"]
+    assert result["issues"][0]["branch"] == first["branch"]
+    assert result["issues"][0]["pr_number"] == first["pr_number"]
+    assert github.issues[1]["state"] == "open"
     assert github.writes == [("create", 100)]
 
 
