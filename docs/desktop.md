@@ -212,6 +212,18 @@ it does not renew limits, clear a stop latch, or replay uncertain work.
 authorize guessing missing business intent. See [operations](operations.md) and
 [issue recovery](issues.md) before continuing.
 
+If a batch is blocked while creating a checkout before any phase was dispatched,
+there may be no desktop claim to cancel. Inspect its retained preparation
+receipt and child state, then follow the
+[same-batch preparation recovery](issues.md#workspace-preparation-failures)
+flow. Use `issues_recover(name=..., acknowledge=true)` for a finite batch or
+`repository_recover(name=..., acknowledge=true)` for repository mode, inspect
+the returned state, and start that same batch only if it is `ready`. Proven
+zero-dispatch recovery retains valid completed global assessments and decisions;
+it does not renew the deadline or call budget. A claimed, expired or uncertain
+request still requires the host cleanup and quarantine handling above. Changing
+the worker or context identity does not turn it into a preparation failure.
+
 ## Limits and evidence
 
 Desktop phase reservations count against `max_invocations`. They count handoffs,

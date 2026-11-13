@@ -144,6 +144,8 @@ dutyloop run --state ../mission-state
 
 `doctor` checks installation and version, without authenticating or calling a model. `init` creates the mission branch and persisted state from committed `HEAD`; uncommitted edits are not copied into the mission. Keep state outside the target repository, and make dependencies available to its fresh worktrees.
 
+On Windows, DutyLoop passes `-c core.longpaths=true` to its managed Git commands without changing repository or global Git configuration. Very deep Git metadata paths may still require a shorter state root. See [checkout failures and recovery](docs/operations.md#windows-checkout-paths).
+
 ### Monitor and control
 
 Use `start` **instead of `run`** to launch a detached process:
@@ -173,6 +175,8 @@ Initialization captures the current open issues and their comments without model
 Execution requires a complete current roadmap, follows stage order and dependencies, and detail-plans only the next eligible issue on the current base before implementation, operator checks and separate review. An incomplete earlier stage blocks later stages. `queue.batch_size` bounds each run; assessment, planning, retries and execution share persistent call and time limits.
 
 Runtime questions and failed attempts keep the assessment cached while live issue states and stage barriers gate execution, preserving calls for eligible fixes. When sources or operator intent change, completed chunks can be reused only if all their input bindings, base, authority and milestone context remain unchanged; changed chunks are reassessed before a fresh global roadmap. A changed base, authority or milestone context requires fresh investigation.
+
+A proven checkout preparation failure before dispatch can be [explicitly recovered in the same batch](docs/issues.md#workspace-preparation-failures). Inspect retained work, use `dutyloop issues recover --state ../issue-state --acknowledge`, then inspect status before `dutyloop issues start` or `dutyloop issues run` with that same state. Valid completed assessments and operator decisions remain recorded; recovery does not renew the budget or deadline, clear a stop, or restart arbitrary blocked work.
 
 Set `github.delivery` to `pull_request` to publish PRs, or `merge` with explicit `required_checks` to wait for CI and merge. With `close_issues: true`, merge mode checks the merged tree and reruns your checks before closing an unchanged issue. Running or starting a batch authorizes its configured delivery operations. Uncertain effects require inspection, and a completed pass can still contain unresolved issues.
 

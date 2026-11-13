@@ -19,7 +19,7 @@ to supply missing intent. Observation mode does not implement planned work.
 | `status` | Read snapshot JSON; `--human` gives a compact terminal summary. |
 | `events` | Read ordered lifecycle/evidence events with a cursor. |
 | `stop` | Persist an asynchronous cancellation request. |
-| `recover --acknowledge` | Explicitly record interrupted work as unknown; never replay it or refund calls. |
+| `recover --acknowledge` | Reconcile interrupted work or an eligible preparation failure; never replay uncertain work or refund calls. |
 | `demo` | Run the offline scripted-driver demonstration. |
 | `mcp` | Serve optional local control tools over stdio. |
 | `desktop-config` | Print local Codex TOML or Claude MCP JSON; no host configuration writes or model work. |
@@ -113,14 +113,47 @@ directory alone leaves Git worktree registrations behind.
    dutyloop recover --state ../mission-state --acknowledge
    ```
 
-3. Inspect the returned state before another `run`. Unknown tasks are quarantined;
-   the supervisor discovers new work instead of blindly replaying the attempt.
+3. Inspect the returned state before another `run` or `start` with the same
+   `--state`. Continue only if recovery returned a runnable state. Unknown tasks
+   are quarantined; the supervisor discovers new work instead of blindly
+   replaying the attempt.
 
 Acknowledgment does not restore calls or wall time. It does not clear an explicit
 stop request. A limited mission has no fresh budget to recover. If Git and
 SQLite disagree about the accepted commit, automatic recovery refuses to repair
 the mismatch. Inspect both histories and initialize a new mission from the
 commit you choose.
+
+## Windows checkout paths
+
+DutyLoop's managed Git commands use `-c core.longpaths=true` on Windows,
+including detached worktree creation and initialization from an existing
+checkout. The override applies to that command only; DutyLoop does not write
+repository, global or system Git configuration. It does not change how your
+verification tools or other applications handle long paths.
+
+A failed managed checkout is retained for inspection and can report
+`blocked / workspace_preparation_failed` with a `preparation_failure` receipt
+describing its path, head and error. Fix the underlying filesystem or Git
+problem, confirm that no worker is still running, then use the appropriate
+`recover --acknowledge` command before retrying `run` or `start` against the same
+state. This covers eligible preparation failures with confirmed cleanup; an
+unknown Git cleanup result keeps its separate inspection requirement.
+
+For issue and repository batches, recovery must also prove that the failed
+checkout never began its model phase or post-merge checks. It preserves
+completed global assessments, operator
+decisions, and spent limits within the same batch; existing source, base and
+authority checks still determine whether planning remains current. See
+[issue recovery](issues.md#workspace-preparation-failures) for the evidence
+requirements, including the narrow older `Filename too long` case. Recovery
+does not make every blocked state runnable.
+
+Git can still reject extremely deep administrative paths, for example with
+`'$GIT_DIR' too big`, despite long-path checkout support. A shorter state root
+may be necessary. Retain the failed state and worktrees for inspection; moving
+or recreating state is not a way to reset limits or automatically carry evidence
+into a different batch.
 
 ## Common problems
 
@@ -138,6 +171,7 @@ commit you choose.
 | `staging_modified_snapshot` | Materializing staged files changed their staged tree, for example through a custom filter's side effect. | Inspect Git attributes, filter configuration, and retained work before creating a new mission. |
 | Unsupported index flags | Assume-unchanged or skip-worktree hid tracked content. | Inspect the retained attempt and flags with `git ls-files -v`; such attempts are rejected before staging. |
 | `unclean_interruption` | Unsettled runner, call, or verifying task. | Inspect artifacts and acknowledge recovery; do not delete the lock to steal ownership. |
+| `workspace_preparation_failed` or checkout `Filename too long` | Retained worktree, preparation receipt, and whether any work was dispatched. | See [Windows checkout paths](#windows-checkout-paths); eligible failures require explicit recovery before same-state restart. |
 | `integration_ref_changed` | Someone or a child changed the shared branch ref. | Inspect Git history; select a trustworthy commit and initialize a new mission. |
 | Cleanup unconfirmed | Call/check result and platform process permissions. | Investigate surviving processes; do not automatically retry uncertain work. |
 | Not enough calls to start another task | Every discovery/retry/review counts separately; an implementation needs room for its review. | Inspect the completed work and unstarted candidate; start a new appropriately budgeted mission only after inspection. |

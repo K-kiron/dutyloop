@@ -194,7 +194,7 @@ class Store:
             elif data["deadline"] is not None and time.time() >= data["deadline"]:
                 data.update(status="limited", reason="wall_time_limit")
             elif data["status"] == "blocked" and data["reason"] not in {
-                "unclean_interruption", "supervisor_interrupted", "worker_cleanup_unconfirmed", "verification_cleanup_unconfirmed", "git_cleanup_unconfirmed",
+                "unclean_interruption", "supervisor_interrupted", "worker_cleanup_unconfirmed", "verification_cleanup_unconfirmed", "git_cleanup_unconfirmed", "workspace_preparation_failed",
             }:
                 pass  # Scope violations, driver errors and exhausted retries remain terminal.
             else:

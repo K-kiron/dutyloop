@@ -242,7 +242,8 @@ Confirmed results are recorded; other incomplete work is left for a decision.
 Recovery performs no GitHub writes and never automatically replays
 implementation, pushes, merges, or closure. Inspect the returned status before
 running again, and reconcile retained work before starting a replacement batch.
-Safety blockers and stop/limit states are not cleared by acknowledgement.
+Only eligible recovery reasons can be cleared; unrelated safety blockers and
+stop/limit states remain unchanged.
 `completed` means this pass has no further eligible work, not that every captured
 issue is closed. Changed captured inputs, operator decisions, or admission
 invalidate the roadmap for new work; base changes also require current-base
@@ -259,6 +260,52 @@ batches or replay unknown work. For an older batch that already exhausted its
 20-call limit, inspect retained work and delivery effects before initializing a
 separate new state. Use explicit recovery where applicable; recovery does not
 reset limits or clear a recorded stop.
+
+### Workspace preparation failures
+
+A managed checkout can fail before its next model phase or post-merge checks start. Such failures
+record `workspace_preparation_failed` and retain a preparation receipt and any
+failed checkout for inspection. On Windows, managed Git commands now use a
+per-command `core.longpaths=true` override without changing saved Git settings;
+see [Windows checkout paths](operations.md#windows-checkout-paths).
+
+After fixing the underlying problem and confirming that no worker is running,
+recover and inspect this same batch before continuing:
+
+```console
+dutyloop issues recover --state ../issue-state --acknowledge
+dutyloop issues status --state ../issue-state
+dutyloop issues start --state ../issue-state
+```
+
+Use `issues run` instead of `issues start` for foreground execution. Continue
+only when the returned state is `ready`. Recovery requires retained evidence of
+confirmed cleanup and no dispatch for the failed preparation. For an execution
+child, its stored mission must have zero calls and tasks, and its owned Git
+identity, head and clean base must agree with the batch. Missing or inconsistent
+evidence leaves the issue for inspection rather than authorizing a retry.
+
+The same check supports a narrow legacy case: an older `selected_task_failed`
+or interrupted issue whose retained zero-dispatch child records Git's
+`Preparing worktree` and `unable to create file ...: Filename too long` error.
+The error text alone is insufficient. Do not delete or edit child state to make
+it eligible. A batch with an explicit stop, exhausted calls or an expired
+deadline cannot be revived this way; uncertain cleanup or dispatched work uses
+the existing interruption flow.
+
+Recovery keeps completed global assessments, the roadmap and operator decisions
+in the same state. A still-current detailed plan returns to `planned`; otherwise
+the issue returns to the queue for current-base detail planning. Normal source,
+base, admission and authority invalidation rules still apply. No business
+decision is required solely to retry a proven preparation failure. The original
+invocation usage and deadline remain in force, including time spent offline;
+acknowledgement neither starts work nor grants a new budget.
+
+If checkout preparation failed after a confirmed merge, the issue stays
+`merged`. Eligible recovery resumes post-merge verification and configured
+closure from the recorded merge commit; it does not repeat implementation or
+the merge. A confirmed-clean Git interruption at the wall deadline remains
+`limited / wall_time_limit` and cannot gain more time through recovery.
 
 ## Configuration reference
 
