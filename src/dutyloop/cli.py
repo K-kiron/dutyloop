@@ -85,7 +85,13 @@ def start_background(state_dir: Path, *, issue_batch=False, plan_only=False, rep
     else:
         _mission_state(state_dir)
         snapshot = _engine().status(state_dir)
-    if snapshot.get("status") in {"stopped", "limited", "blocked"} or snapshot.get("stop_requested"):
+    if snapshot.get("status") == "blocked" and not snapshot.get("stop_requested"):
+        command = "dutyloop repository" if repository else "dutyloop issues" if issue_batch else "dutyloop"
+        raise ValueError(
+            "This mission cannot restart while blocked. Inspect the failure and use "
+            f"{command} recover --state <same-state> --acknowledge for eligible recovery, then retry start. "
+            "Recovery preserves the existing budget and deadline; not every blocked state is recoverable.")
+    if snapshot.get("status") in {"stopped", "limited"} or snapshot.get("stop_requested"):
         raise ValueError("This mission cannot restart after stopping, reaching a limit, or becoming blocked.")
 
     stdout_path = state_dir / "runner.stdout.log"

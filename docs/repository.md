@@ -167,6 +167,24 @@ and period offline. A stopped or exhausted coordinator cannot restart itself.
 Unknown external results remain quarantined: recovery reads remote state and
 requires acknowledgment; it does not blindly repeat a push, merge or closure.
 
+A proven pre-dispatch workspace preparation failure can be recovered in this
+same coordinator state. Inspect the retained checkout and repair the underlying
+problem, then run:
+
+```console
+dutyloop repository recover --state ../repository-state --acknowledge
+dutyloop repository status --state ../repository-state
+dutyloop repository start --state ../repository-state
+```
+
+Continue only if recovery returns `ready`; use `repository run` for foreground
+execution. Completed global assessments and operator decisions remain recorded
+under their existing validity rules, and the original budget and deadline still
+apply. This also covers the narrowly evidenced older `Filename too long`
+checkout failure described in [issue recovery](issues.md#workspace-preparation-failures).
+It does not clear other safety blockers, stop requests or limits, change
+observation mode, or transfer cached work to a new batch.
+
 A confirmed-clean GitHub read cancelled at its wall deadline ends as
 `limited / wall_time_limit`. Unknown cleanup or outcomes remain blocked, even
 when a stop signal arrives; the stop is also retained.

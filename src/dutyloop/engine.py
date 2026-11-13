@@ -19,7 +19,7 @@ from .drivers import DriverRequest, get_driver
 from .process import run_process
 from .schemas import DISCOVERY_SCHEMA, IMPLEMENT_SCHEMA, REVIEW_SCHEMA, validate_payload
 from .store import Store, runner_lock
-from .workspace import GitCleanupError, assert_identity, check_scope, controlled_git, create_branch, fingerprint, git, make_worktree, prepare_commit, remove_observation, staged_diff
+from .workspace import GitCleanupError, WorkspacePreparationError, assert_identity, check_scope, controlled_git, create_branch, fingerprint, git, make_worktree, prepare_commit, remove_observation, staged_diff
 
 
 def initialize(spec: dict, state_dir: Path) -> dict:
@@ -268,6 +268,11 @@ class Supervisor:
             if isinstance(exc, GitCleanupError):
                 self.store.set_status("blocked", "git_cleanup_unconfirmed")
 
+    def preparation_failed(self, error):
+        receipt = {**error.receipt(), "cleanup_confirmed": True, "dispatch_started": False}
+        self.store.event("workspace_preparation_failed", receipt)
+        self.store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
+
     def execute(self, candidate):
         if not self.store.require_calls(2):
             self.store.event("task_not_started", {"key": candidate["key"], "reason": self.store.control()["reason"]})
@@ -407,7 +412,9 @@ class Supervisor:
             pass
         except Exception as exc:
             self.store.event("selected_task_error", {"error": str(exc)})
-            if isinstance(exc, GitCleanupError):
+            if isinstance(exc, WorkspacePreparationError):
+                self.preparation_failed(exc)
+            elif isinstance(exc, GitCleanupError):
                 self.store.set_status("blocked", "git_cleanup_unconfirmed")
             elif not self.stopped() and self.store.control()["status"] != "blocked":
                 self.store.set_status("blocked", "selected_task_failed")
@@ -453,9 +460,12 @@ class Supervisor:
                 break
             except Exception as exc:
                 self.store.event("cycle_error", {"error": str(exc)})
-                if isinstance(exc, GitCleanupError):
+                if isinstance(exc, WorkspacePreparationError):
+                    self.preparation_failed(exc)
+                elif isinstance(exc, GitCleanupError):
                     self.store.set_status("blocked", "git_cleanup_unconfirmed")
-                self.store.failure("repeated_cycle_failures")
+                else:
+                    self.store.failure("repeated_cycle_failures")
         snapshot = self.store.snapshot()
         if snapshot["stop_requested"] or self.interrupted.is_set():
             self.store.stop()

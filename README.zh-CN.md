@@ -142,6 +142,8 @@ dutyloop run --state ../mission-state
 
 `doctor` 检查安装和版本，不验证认证状态，也不调用模型。 `init` 从已提交的 `HEAD` 创建职责分支和持久状态；未提交的改动不会复制到任务中。 状态目录应放在目标仓库之外，并确保新 worktree 能使用项目所需的依赖。
 
+在 Windows 上，DutyLoop 为受管理的 Git 命令传入 `-c core.longpaths=true`，不修改仓库或全局 Git 配置。Git 元数据路径过深时，仍可能需要更短的状态目录根路径。详见[检出失败与恢复](docs/operations.md#windows-checkout-paths)。
+
 ### 监控与控制
 
 使用 `start` **替代 `run`**，启动后台进程：
@@ -171,6 +173,8 @@ dutyloop issues run --state ../issue-state
 执行新工作前必须有完整且有效的路线图。执行遵循阶段顺序和依赖，只针对当前基线上的下一项可执行 issue 详细规划，再依次实施、运行操作者检查并单独复核。前一阶段未完成时不能跳到后一阶段。`queue.batch_size` 限制单次实施的 issue 数量；分析、规划、重试和执行共用跨运行保留的调用与时间额度。
 
 运行中发现待答问题或实施失败时，会保留已有分析，并根据 issue 的实时状态和阶段门槛限制执行，将调用额度留给可推进的修复。来源或操作者意图变化后，只有整块输入绑定、基线、授权范围和里程碑背景均未变化的已完成分析块才可复用；变化的分块重新分析后，再生成新的全局路线图。基线、授权范围或里程碑背景变化时，必须重新调查。
+
+经证据确认、发生在任务派发前的 checkout 准备失败，可以[在同一批次中显式恢复](docs/issues.md#workspace-preparation-failures)。先检查保留的工作，执行 `dutyloop issues recover --state ../issue-state --acknowledge`，再检查状态，并对同一状态目录执行 `dutyloop issues start` 或 `dutyloop issues run`。仍有效的已完成分析和操作者决定会保留；恢复不重置预算或截止时间、不清除停止记录，也不允许任意阻塞任务重新运行。
 
 将 `github.delivery` 设为 `pull_request` 可发布 PR；设为 `merge` 并明确指定 `required_checks`，可等待 CI 后合并。启用 `close_issues: true` 后，合并模式会核对合并后的 Git 树并重新运行你的检查，再关闭需求未变化的 issue。运行或启动批次，即授权执行配置中选定的交付操作。结果不明的操作需要检查；一轮完成也可能仍有未解决的 issue。
 

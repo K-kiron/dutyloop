@@ -7,6 +7,7 @@ import contextvars
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,6 +22,20 @@ class GitCleanupError(RuntimeError):
     """A Git child may still be alive; no more work may be dispatched."""
 
 
+class WorkspacePreparationError(RuntimeError):
+    """A managed checkout failed before model work, with known Git cleanup."""
+
+    def __init__(self, path, head, error):
+        self.path = Path(path)
+        self.head = head
+        self.detail = str(error)
+        super().__init__(f"Could not prepare worktree {self.path}: {self.detail}")
+
+    def receipt(self):
+        return {"operation": "worktree_add", "worktree": str(self.path),
+                "head": self.head, "error": self.detail}
+
+
 @contextmanager
 def controlled_git(should_stop, remaining, output_dir):
     token = _CONTROL.set((should_stop, remaining, output_dir))
@@ -31,7 +46,11 @@ def controlled_git(should_stop, remaining, output_dir):
 
 
 def git(project: Path, *args: str) -> str:
-    argv = ["git", "-C", str(project), *args]
+    argv = ["git", "-C", str(project)]
+    if sys.platform == "win32":
+        # Managed file paths can exceed MAX_PATH; keep the override process-local.
+        argv += ["-c", "core.longpaths=true"]
+    argv += args
     control = _CONTROL.get()
     if control is not None:
         should_stop, remaining, output_dir = control
@@ -67,8 +86,13 @@ def make_worktree(project: Path, path: Path, head: str) -> Path:
     path = plain_path(path)
     if path.exists():
         raise ValueError(f"Worktree path already exists: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    git(project, "worktree", "add", "--detach", str(path), head)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        git(project, "worktree", "add", "--detach", str(path), head)
+    except GitCleanupError:
+        raise
+    except (RuntimeError, OSError) as error:
+        raise WorkspacePreparationError(path, head, error) from error
     return path
 
 

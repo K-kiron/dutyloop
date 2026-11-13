@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Enable process-local Windows long-path support for managed Git worktrees.
+  Recover proven pre-dispatch workspace failures in the same issue batch,
+  including retained legacy checkout failures, without renewing limits or
+  discarding completed assessments, approved decisions, or current issue plans.
+
 - Investigate large backlogs in bounded parallel waves, defaulting to three
   isolated workers sharing the original call and wall-time budgets. Retain all
   child receipts and completed chunks on interruption; synthesize only after

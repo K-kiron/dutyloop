@@ -21,7 +21,7 @@ from .issue_config import ISSUE_PLAN_SCHEMA, PR_FEEDBACK_SCHEMA, branch_name, ch
 from .issue_store import IssueStore
 from .process import run_process
 from .store import Store, runner_lock
-from .workspace import GitCleanupError, assert_identity, controlled_git, fingerprint, git, make_worktree
+from .workspace import GitCleanupError, WorkspacePreparationError, assert_identity, controlled_git, fingerprint, git, make_worktree
 
 
 _TERMINAL = {"closed", "external_closed", "accepted_local", "delivered"}
@@ -76,10 +76,67 @@ def events(state_dir, *, after_id=0, limit=20):
     return {"events": rows, "next_cursor": rows[-1]["id"] if rows else after_id}
 
 
+def _direct_preparation(store, original):
+    """Recognize an owned parent checkout failure before a child was launched."""
+    receipt = original.get("preparation_failure") or {}
+    if (original.get("reason") != "workspace_preparation_failed" or receipt.get("origin") != "issue_child"
+            or receipt.get("operation") != "worktree_add" or receipt.get("cleanup_confirmed") is not True
+            or receipt.get("dispatch_started") is not False or receipt.get("invocations") != original["invocations"]
+            or receipt.get("purpose") not in {"backlog", "plan", "fix", "feedback"}):
+        return None
+    try:
+        path = plain_path(Path(receipt["worktree"]))
+        if path.parent != store.directory / "bases" or not re.fullmatch(r"[0-9a-f]{10}", path.name):
+            return None
+        head = receipt["head"]
+        planning = original.get("planning") or {}
+        row = next((row for row in store.snapshot()["issues"] if row["number"] == receipt.get("issue_number")), None)
+        expected = (row.get("head") or row.get("plan_base_sha")) if row else planning.get("base_sha")
+        if receipt["purpose"] == "plan":
+            expected = (row.get("head") or planning.get("expected_head")) if row else None
+        if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head) or head != expected:
+            return None
+        return receipt
+    except (KeyError, TypeError, ValueError, OSError):
+        return None
+
+
+def _workspace_retries(store, original):
+    from .preparation import inspect_child
+
+    if original.get("reason") not in {"selected_task_failed", "workspace_preparation_failed"}:
+        return {}, None, False
+    receipts = {}
+    snapshot = store.snapshot()
+    if any(call["state"] != "finished" for call in snapshot["calls"]):
+        return {}, None, False
+    rows = snapshot["issues"]
+    blockers = [row for row in rows if row["state"] == "interrupted" or row["state"] == "needs_decision"
+                and row.get("reason") in {"interrupted_work_requires_inspection", "workspace_preparation_failed",
+                                          "selected_task_failed"}]
+    for row in blockers:
+        receipt = inspect_child(store, row)
+        if receipt is not None:
+            receipts[row["number"]] = receipt
+    direct = _direct_preparation(store, original)
+    failed = original.get("preparation_failure") or {}
+    if original.get("reason") == "selected_task_failed":
+        proven = bool(blockers) and len(receipts) == len(blockers)
+    elif original.get("reason") == "workspace_preparation_failed":
+        proven = direct is not None or any(
+            receipt["child_state"] == failed.get("child_state") for receipt in receipts.values())
+    else:
+        proven = False
+    return receipts, direct, proven
+
+
 def recover(state_dir, *, acknowledge=False, github=None):
     store = IssueStore(state_dir)
     with runner_lock(store.directory):
         original = store.control()
+        if acknowledge is not True:
+            raise ValueError("Recovery requires acknowledge=True for uncertain previous work")
+        receipts, direct, preparation_proven = _workspace_retries(store, original)
         if acknowledge is True and original["spec"]["driver"]["name"] == "desktop":
             from .desktop import DesktopQueue
             DesktopQueue(store.directory).invalidate()
@@ -89,6 +146,21 @@ def recover(state_dir, *, acknowledge=False, github=None):
                 and (store.control()["deadline"] is None or store.control()["deadline"] > time.time())
                 and store.control()["invocations"] < original["spec"]["limits"]["max_invocations"]):
             store.set_status("ready", "recovered_unknown_work")
+        eligible = (not original["stop_requested"] and original["status"] not in {"stopped", "limited"}
+                    and IssueStore._limit(store.control(), time.time()) is None)
+        if original["status"] == "blocked" and preparation_proven and eligible:
+            store.set_status("ready", "workspace_preparation_recovered")
+            for number, receipt in receipts.items():
+                store.update_issue(number, "planned" if receipt["plan_current"] else "queued",
+                                   reason=None, previous_state=None,
+                                   **({"plan_base_sha": None} if not receipt["plan_current"] else {}))
+                store.event("workspace_preparation_recovered", receipt)
+            if direct is not None:
+                number, purpose = direct.get("issue_number"), direct["purpose"]
+                if number is not None and purpose in {"plan", "fix"}:
+                    store.update_issue(number, "queued" if purpose == "plan" else "planned", reason=None,
+                                       previous_state=None, **({"plan_base_sha": None} if purpose == "plan" else {}))
+                store.event("workspace_preparation_recovered", direct)
         runner = IssueRunner(store, None, threading.Event(), github or _client(original["spec"], store.directory))
         for row in store.snapshot()["issues"]:
             if row["state"] != "interrupted":
@@ -235,7 +307,15 @@ class IssueRunner:
 
     def child(self, number, head, purpose):
         token = uuid.uuid4().hex[:10]
-        workspace = make_worktree(self.project, self.store.directory / "bases" / token, head)
+        try:
+            workspace = make_worktree(self.project, self.store.directory / "bases" / token, head)
+        except WorkspacePreparationError as error:
+            receipt = {**error.receipt(), "issue_number": number, "purpose": purpose,
+                       "origin": "issue_child", "cleanup_confirmed": True, "dispatch_started": False,
+                       "invocations": self.store.control()["invocations"]}
+            self.store.event("workspace_preparation_failed", receipt)
+            self.store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
+            raise
         directory = self.store.directory / "missions" / token
         core = {key: value for key, value in self.spec.items() if key not in {"github", "queue"}}
         label = f"issue-{number}-{purpose}" if number is not None else "backlog-plan"
@@ -396,7 +476,11 @@ class IssueRunner:
         if result["status"] == "stopped" and not self.stopped():
             self.interrupted.set()
         if result["status"] == "blocked" and result["reason"] != "repeated_task_failures":
-            self.store.set_status("blocked", result["reason"])
+            fields = {}
+            if result["reason"] == "workspace_preparation_failed":
+                fields["preparation_failure"] = {**result["preparation_failure"], "issue_number": number,
+                                                  "child_state": str(directory), "origin": "selected_child"}
+            self.store.set_status("blocked", result["reason"], **fields)
         accepted = [task for task in result["tasks"] if task["state"] == "accepted"]
         if not accepted:
             if self.stopped():
@@ -871,6 +955,12 @@ def run(state_dir, *, driver=None, github=None, plan_only=False):
                 store.set_status("blocked", "github_outcome_unknown" if error.outcome_unknown else "github_error")
                 store.event("github_error", {"outcome_unknown": error.outcome_unknown})
                 raise
+        except WorkspacePreparationError as error:
+            if store.control()["status"] != "blocked":
+                receipt = {**error.receipt(), "cleanup_confirmed": True, "dispatch_started": False}
+                store.event("workspace_preparation_failed", receipt)
+                store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
+            raise
         except GitCleanupError:
             store.set_status("blocked", "git_cleanup_unconfirmed")
             raise
