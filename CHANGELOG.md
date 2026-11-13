@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Retain complete historical source investigations across verified in-batch
+  progress, while reassessing current code at stage boundaries and detail-planning
+  the next issue on its execution base. Reject incomplete or unbound notes,
+  changed inputs/authority and external gaps in the verified change chain.
+- Support bounded asynchronous desktop phase waits through
+  `desktop_next(wait_seconds=20)`, with immediate responses still the default.
+  Keep submissions and stop tools responsive during waits.
+- Wake short command supervision on process exit and combine detached HEAD/SHA
+  validation into one Git invocation, retaining process containment, deadlines,
+  cleanup and acceptance gates.
+
 - Enable process-local Windows long-path support for managed Git worktrees.
   Recover proven pre-dispatch workspace failures in the same issue batch,
   including retained legacy checkout failures, without renewing limits or
@@ -13,7 +24,8 @@
   complete coverage and join workers before returning.
 - Reuse source investigations across runtime questions and failures, keeping
   live issue and stage gates. Reassess only changed chunks on the same code and
-  authority; new bases or planning authority require fresh investigations.
+  authority; external base changes or changed planning authority require fresh
+  investigations. Verified batch progress can retain historical notes as above.
 - Write redirected CLI output and background logs as UTF-8, including structured
   error output, rather than failing on Unicode under legacy Windows encodings.
 

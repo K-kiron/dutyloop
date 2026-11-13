@@ -174,7 +174,7 @@ Initialization captures the current open issues and their comments without model
 
 Execution requires a complete current roadmap, follows stage order and dependencies, and detail-plans only the next eligible issue on the current base before implementation, operator checks and separate review. An incomplete earlier stage blocks later stages. `queue.batch_size` bounds each run; assessment, planning, retries and execution share persistent call and time limits.
 
-Runtime questions and failed attempts keep the assessment cached while live issue states and stage barriers gate execution, preserving calls for eligible fixes. When sources or operator intent change, completed chunks can be reused only if all their input bindings, base, authority and milestone context remain unchanged; changed chunks are reassessed before a fresh global roadmap. A changed base, authority or milestone context requires fresh investigation.
+Runtime questions and failed attempts keep the assessment cached while live issue states and stage barriers gate execution, preserving calls for eligible fixes. Changed chunks are reassessed when sources or operator intent change on the same base and planning authority. At a phase boundary, complete historical investigations can survive a chain of this batch's verified changes with unchanged inputs; a fresh roadmap still inspects the current code, and the next issue gets a current-base detailed plan. External base changes or changed planning authority require fresh investigation. See the [planning reuse rules](docs/issues.md#prepare-and-inspect-plans).
 
 A proven checkout preparation failure before dispatch can be [explicitly recovered in the same batch](docs/issues.md#workspace-preparation-failures). Inspect retained work, use `dutyloop issues recover --state ../issue-state --acknowledge`, then inspect status before `dutyloop issues start` or `dutyloop issues run` with that same state. Valid completed assessments and operator decisions remain recorded; recovery does not renew the budget or deadline, clear a stop, or restart arbitrary blocked work.
 
@@ -248,6 +248,8 @@ dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 ```
 
 Tools cover mission and issue creation, start, status, events, stop, and explicit recovery; issue decisions use `issues_resolve`. Desktop workers claim and return phases with `desktop_next`, `desktop_submit`, and `desktop_cancel`. Creation does not start work. Configure your client and project allowlist as described in [MCP setup](docs/mcp.md); use the [desktop guide](docs/desktop.md) for your current conversation. MCP connectivity alone does not certify host execution.
+
+For an active desktop worker, use `desktop_next(..., wait_seconds=20)` to wait for work in one bounded call instead of repeated empty polls. Independent workers can wait concurrently; submissions and stop tools remain responsive. See the [measured efficiency limits](docs/validation.md#workflow-efficiency-evidence-on-2026-11-13) before comparing a complete backlog audit with a single coding instruction.
 
 </details>
 

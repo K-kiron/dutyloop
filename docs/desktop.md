@@ -82,8 +82,9 @@ spec=<that JSON object>), then issues_start(name="maintenance-issues").
 
 Use a stable worker_id for this worker and a distinct context_id for each actual
 host context. Call desktop_next(name="maintenance-issues", worker_id=<worker>,
-context_id=<context>, kind="issues"). If no request is ready, read issues_status,
-wait briefly, and poll again while the runner is active. Keep roadmap stage
+context_id=<context>, kind="issues", wait_seconds=20). This waits for work in
+one bounded call. If it returns waiting, read issues_status and call again while
+the runner is active. Keep roadmap stage
 gates and per-issue decisions visible. Continue only eligible work in the current
 stage. Stop polling at a terminal
 batch state or when the batch cannot progress without an operator decision.
@@ -143,8 +144,12 @@ live issue states and stage barriers before selecting work. For genuine source,
 admission or operator-decision changes, completed chunks may be reused only when
 all their bindings and the base, authority and milestone context still match;
 the host receives assessment requests for changed chunks and a fresh global
-synthesis request. Changed base, authority or milestone context requires fresh
-chunk assessment.
+synthesis request. External base changes or changed planning authority or
+milestone context require fresh chunk assessment. At phase boundaries, complete
+historical investigations can survive only this batch's verified change chain
+with unchanged inputs. A fresh roadmap must inspect current code, and detailed
+plans remain current-base. Inspect `planning.assessment_base_sha` and
+`planning.assessment_reuse_mode` for provenance; see the [reuse rules](issues.md#prepare-and-inspect-plans).
 Inspect `planning.reused_assessments` and `planning.reused_issues` for the reused
 coverage. This preserves the original budget and does not waive human gates.
 
@@ -165,7 +170,7 @@ tool. Monitor with `mission_status` and `mission_events`. Omitted `kind` means
 
 | Tool | Required handoff inputs | Effect |
 | --- | --- | --- |
-| `desktop_next` | `name`, `worker_id`, `context_id`; optional `kind` | Claim one pending phase, or report that none is ready. |
+| `desktop_next` | `name`, `worker_id`, `context_id`; optional `kind`, `wait_seconds` | Claim one pending phase, optionally waiting up to 30 seconds for work. |
 | `desktop_submit` | `name`, `request_id`, `token`, `worker_id`, `context_id`, `payload`, `work_stopped`; optional `kind` | Submit the claiming worker's result for validation. |
 | `desktop_cancel` | The same identity and `work_stopped`, without `payload`; optional `kind` | Cancel the claimed phase after host work has stopped. |
 
@@ -176,6 +181,14 @@ for another worker or put tokens in public artifacts. Follow the returned
 schema rather than assuming all phases accept the same JSON. For example, an
 implementation payload contains `summary` and `completed`; a review payload
 contains `accepted`, `summary`, and `findings`.
+
+`wait_seconds` defaults to `0` for an immediate response; use `20` while actively
+waiting for the next phase. It must be a finite number from `0` to `30`. Waiting
+ends on work, control closure or the stored deadline, without extending budgets.
+MCP waits yield the server event loop between immediate claim checks so result
+submissions, stop tools and other actual workers remain responsive. Cancelling
+an empty wait leaves no background worker that could claim later work. A wait
+does not create an agent, perform work or wake an idle conversation.
 
 Execute in the returned managed `cwd`, even if your conversation opened the
 original project folder. Keep all phase work inside the authorized scope, and

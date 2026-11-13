@@ -252,10 +252,14 @@ def run_process(argv, *, cwd: Path, input_text: str = "", output_dir: Path,
             if should_stop():
                 result.cancelled = True
                 break
-            if time.monotonic() - started >= timeout_seconds:
+            remaining = timeout_seconds - (time.monotonic() - started)
+            if remaining <= 0:
                 result.timed_out = True
                 break
-            time.sleep(0.05)
+            try:
+                process.wait(timeout=min(0.05, remaining))
+            except subprocess.TimeoutExpired:
+                pass
     except (OSError, ValueError, RuntimeError) as exc:
         result.error = f"Cannot run child process: {exc}"
     finally:
