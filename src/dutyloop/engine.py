@@ -271,7 +271,13 @@ class Supervisor:
     def preparation_failed(self, error):
         receipt = {**error.receipt(), "cleanup_confirmed": True, "dispatch_started": False}
         self.store.event("workspace_preparation_failed", receipt)
-        self.store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
+        control = self.store.control()
+        if control["status"] in {"blocked", "limited", "stopped"} or control["stop_requested"] or self.interrupted.is_set():
+            return
+        if self.remaining() <= 0:
+            self.store.set_status("limited", "wall_time_limit")
+        else:
+            self.store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
 
     def execute(self, candidate):
         if not self.store.require_calls(2):

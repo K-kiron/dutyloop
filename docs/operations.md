@@ -140,8 +140,9 @@ problem, confirm that no worker is still running, then use the appropriate
 state. This covers eligible preparation failures with confirmed cleanup; an
 unknown Git cleanup result keeps its separate inspection requirement.
 
-For issue and repository batches, recovery must also prove that the affected
-work never dispatched. It preserves completed global assessments, operator
+For issue and repository batches, recovery must also prove that the failed
+checkout never began its model phase or post-merge checks. It preserves
+completed global assessments, operator
 decisions, and spent limits within the same batch; existing source, base and
 authority checks still determine whether planning remains current. See
 [issue recovery](issues.md#workspace-preparation-failures) for the evidence

@@ -263,7 +263,7 @@ reset limits or clear a recorded stop.
 
 ### Workspace preparation failures
 
-A managed checkout can fail before a model phase or task starts. Such failures
+A managed checkout can fail before its next model phase or post-merge checks start. Such failures
 record `workspace_preparation_failed` and retain a preparation receipt and any
 failed checkout for inspection. On Windows, managed Git commands now use a
 per-command `core.longpaths=true` override without changing saved Git settings;
@@ -300,6 +300,12 @@ base, admission and authority invalidation rules still apply. No business
 decision is required solely to retry a proven preparation failure. The original
 invocation usage and deadline remain in force, including time spent offline;
 acknowledgement neither starts work nor grants a new budget.
+
+If checkout preparation failed after a confirmed merge, the issue stays
+`merged`. Eligible recovery resumes post-merge verification and configured
+closure from the recorded merge commit; it does not repeat implementation or
+the merge. A confirmed-clean Git interruption at the wall deadline remains
+`limited / wall_time_limit` and cannot gain more time through recovery.
 
 ## Configuration reference
 

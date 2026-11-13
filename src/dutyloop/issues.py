@@ -77,24 +77,31 @@ def events(state_dir, *, after_id=0, limit=20):
 
 
 def _direct_preparation(store, original):
-    """Recognize an owned parent checkout failure before a child was launched."""
+    """Recognize an owned checkout failure before its next phase was launched."""
     receipt = original.get("preparation_failure") or {}
-    if (original.get("reason") != "workspace_preparation_failed" or receipt.get("origin") != "issue_child"
+    if (original.get("reason") != "workspace_preparation_failed" or receipt.get("origin") not in {"issue_child", "post_merge"}
             or receipt.get("operation") != "worktree_add" or receipt.get("cleanup_confirmed") is not True
-            or receipt.get("dispatch_started") is not False or receipt.get("invocations") != original["invocations"]
-            or receipt.get("purpose") not in {"backlog", "plan", "fix", "feedback"}):
+            or receipt.get("dispatch_started") is not False or receipt.get("invocations") != original["invocations"]):
         return None
     try:
         path = plain_path(Path(receipt["worktree"]))
-        if path.parent != store.directory / "bases" or not re.fullmatch(r"[0-9a-f]{10}", path.name):
-            return None
         head = receipt["head"]
+        if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head):
+            return None
         planning = original.get("planning") or {}
         row = next((row for row in store.snapshot()["issues"] if row["number"] == receipt.get("issue_number")), None)
+        if receipt["origin"] == "post_merge":
+            if (receipt.get("purpose") != "post_merge" or row is None or row["state"] != "merged"
+                    or path.parent != store.directory / "post-merge" or not re.fullmatch(r"[0-9a-f]{32}", path.name)):
+                return None
+            return receipt if head == row.get("merge_sha") else None
+        if (path.parent != store.directory / "bases" or not re.fullmatch(r"[0-9a-f]{10}", path.name)
+                or receipt.get("purpose") not in {"backlog", "plan", "fix", "feedback"}):
+            return None
         expected = (row.get("head") or row.get("plan_base_sha")) if row else planning.get("base_sha")
         if receipt["purpose"] == "plan":
             expected = (row.get("head") or planning.get("expected_head")) if row else None
-        if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head) or head != expected:
+        if head != expected:
             return None
         return receipt
     except (KeyError, TypeError, ValueError, OSError):
@@ -310,11 +317,7 @@ class IssueRunner:
         try:
             workspace = make_worktree(self.project, self.store.directory / "bases" / token, head)
         except WorkspacePreparationError as error:
-            receipt = {**error.receipt(), "issue_number": number, "purpose": purpose,
-                       "origin": "issue_child", "cleanup_confirmed": True, "dispatch_started": False,
-                       "invocations": self.store.control()["invocations"]}
-            self.store.event("workspace_preparation_failed", receipt)
-            self.store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
+            self.preparation_failed(error, issue_number=number, purpose=purpose, origin="issue_child")
             raise
         directory = self.store.directory / "missions" / token
         core = {key: value for key, value in self.spec.items() if key not in {"github", "queue"}}
@@ -325,6 +328,18 @@ class IssueRunner:
         core["research_domains"] = list(dict.fromkeys([*core["research_domains"], "github.com"]))
         engine.initialize(core, directory)
         return workspace, directory
+
+    def preparation_failed(self, error, **fields):
+        receipt = {**error.receipt(), **fields, "cleanup_confirmed": True, "dispatch_started": False,
+                   "invocations": self.store.control()["invocations"]}
+        self.store.event("workspace_preparation_failed", receipt)
+        control = self.store.control()
+        if control["status"] in {"blocked", "limited", "stopped"} or control["stop_requested"] or self.interrupted.is_set():
+            return
+        if self.remaining() <= 0:
+            self.store.set_status("limited", "wall_time_limit")
+        else:
+            self.store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
 
     def finish_observation(self, child_store, success, reason):
         """Retain child failure and interruption evidence after a read-only phase."""
@@ -475,7 +490,8 @@ class IssueRunner:
         # Propagate that stop to the batch before considering another issue.
         if result["status"] == "stopped" and not self.stopped():
             self.interrupted.set()
-        if result["status"] == "blocked" and result["reason"] != "repeated_task_failures":
+        if (result["status"] == "blocked" and result["reason"] != "repeated_task_failures"
+                and self.store.control()["status"] != "blocked"):
             fields = {}
             if result["reason"] == "workspace_preparation_failed":
                 fields["preparation_failure"] = {**result["preparation_failure"], "issue_number": number,
@@ -735,7 +751,11 @@ class IssueRunner:
         comparison = self.github.compare(row["merge_sha"], base)
         if comparison.get("status") not in {"identical", "ahead"}:
             raise RuntimeError("Merged commit is not contained in the target branch")
-        workspace = make_worktree(self.project, self.store.directory / "post-merge" / uuid.uuid4().hex, row["merge_sha"])
+        try:
+            workspace = make_worktree(self.project, self.store.directory / "post-merge" / uuid.uuid4().hex, row["merge_sha"])
+        except WorkspacePreparationError as error:
+            self.preparation_failed(error, issue_number=row["number"], purpose="post_merge", origin="post_merge")
+            raise
         if git(workspace, "rev-parse", "HEAD^{tree}") != row["verified_tree"]:
             self.store.update_issue(row["number"], "needs_decision", reason="merged_tree_differs_from_verified_tree")
             return
@@ -956,10 +976,8 @@ def run(state_dir, *, driver=None, github=None, plan_only=False):
                 store.event("github_error", {"outcome_unknown": error.outcome_unknown})
                 raise
         except WorkspacePreparationError as error:
-            if store.control()["status"] != "blocked":
-                receipt = {**error.receipt(), "cleanup_confirmed": True, "dispatch_started": False}
-                store.event("workspace_preparation_failed", receipt)
-                store.set_status("blocked", "workspace_preparation_failed", preparation_failure=receipt)
+            if store.control()["status"] not in {"blocked", "limited", "stopped"}:
+                runner.preparation_failed(error)
             raise
         except GitCleanupError:
             store.set_status("blocked", "git_cleanup_unconfirmed")
