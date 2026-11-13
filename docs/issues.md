@@ -86,9 +86,21 @@ roadmap. In the chunked path, a completed assessment can be reused only when
 every issue in that chunk has the same source, admission and decision bindings,
 and the repository base, operator authority and milestone context are unchanged.
 A changed member causes its whole chunk to be reassessed before global
-synthesis. Base, authority or milestone changes require fresh assessments for
-all chunks. Older records missing reuse bindings receive a fresh assessment;
-reuse never approves execution or renews the budget.
+synthesis. External base changes, changed planning authority or milestone
+changes require fresh assessments for all chunks. Older records missing reuse
+bindings receive a fresh assessment; reuse never approves execution or renews
+the budget.
+
+At a stage boundary, complete source investigations may be retained as historical
+context if every input binding is unchanged and the entire path from their
+original base to the current head consists of this batch's verified changes.
+Local changes require operator checks and independent review; merged changes
+also require successful post-merge verification of the exact merge commit.
+An external intermediate commit, unverified outcome, missing completed chunk
+receipt or incomplete coverage prevents this reuse. The new global roadmap
+still inspects current code and reassesses every disposition and dependency;
+the next issue still receives a fresh detailed plan on its execution base.
+Historical notes never establish current acceptance or release a human gate.
 
 Inspect `planning` in JSON status or the compact `--human` view. It records the
 revision, source fingerprint, base commit, assessed and unassessed issue numbers,
@@ -102,6 +114,12 @@ view summarizes completed and active requests. `planning.child_states` retains
 all child state paths for the revision; `child_state` remains available for
 compatibility. `planning.reused_assessments` and `planning.reused_issues` identify
 coverage carried from completed chunks into a new revision.
+`planning.assessment_base_sha` identifies the source investigations' original
+code base, which may precede `planning.base_sha` when
+`planning.assessment_reuse_mode` is `verified_progress`. That mode reuses source
+context, not executable plans. Planning authority here binds the mission,
+constraints, allowed paths, verification commands, work kinds, repository and
+milestone context.
 
 ## Run and control a batch
 

@@ -178,6 +178,34 @@ def note_progress(runner, head):
         runner.store.save_planning(state)
 
 
+def verified_progress(snapshot, previous, head):
+    """Historical investigations survive only a chain of accepted batch changes.
+
+    This permits a fresh global assessment to use prior source notes. It does
+    not reuse an old roadmap or approve a detailed plan on changed code.
+    """
+    origin = previous.get("assessment_base_sha") or previous.get("base_sha")
+    if (not origin or origin == head or previous.get("source_fingerprint") != source_fingerprint(snapshot)
+            or previous.get("assessment_context_fingerprint") != digest(
+                {"base_sha": origin, **authority(snapshot)})):
+        return False
+    delivery = snapshot["spec"]["github"]["delivery"]
+    edges = {}
+    for row in snapshot["issues"]:
+        target = row.get("head") if delivery == "local" else row.get("merge_sha")
+        if backlog.verified(row, delivery) and row.get("base_sha") and target:
+            edges.setdefault(row["base_sha"], set()).add(target)
+    visited, pending = set(), [origin]
+    while pending:
+        current = pending.pop()
+        if current == head:
+            return True
+        if current not in visited:
+            visited.add(current)
+            pending.extend(edges.get(current, set()) - visited)
+    return False
+
+
 class Planner:
     def __init__(self, runner, budget_driver):
         self.runner, self.budget_driver = runner, budget_driver
@@ -268,8 +296,17 @@ class Planner:
                 "Do not invent commands or alter acceptance policy. Use full sources when provided; synthesis "
                 "notes cover all sources and must be considered together with current code and supplied progress."
             )
+            if assessments and self.state.get("assessment_reuse_mode") == "verified_progress":
+                instruction += (
+                    " These source investigations are HISTORICAL, from assessment_base_sha. The intervening "
+                    "changes passed batch verification and independent review, but may invalidate observations. "
+                    "Inspect the CURRENT repository_base_sha and reassess every disposition, stage and dependency. "
+                    "Historical notes are context, never current-code approvals or executable plans."
+                )
         return supervisor.prompt(instruction, planning_operation=operation, planning_context=self.context,
                                  backlog=entries, assessments=assessments or [],
+                                 assessment_base_sha=self.state.get("assessment_base_sha", head),
+                                 assessment_reuse_mode=self.state.get("assessment_reuse_mode", "same_base"),
                                  repository_base_sha=head, coverage=self.state["coverage"])
 
     def request(self, supervisor, operation, entries, head, *, assessments=None, allow_chunks=False):
@@ -474,8 +511,16 @@ class Planner:
         if not same:
             previous = self.state
             context = digest({"base_sha": head, **authority(self.snapshot)})
-            notes, records = self.reusable(previous, context)
+            historical = verified_progress(self.snapshot, previous, head)
+            origin = (previous.get("assessment_base_sha") or previous.get("base_sha")) if historical else head
+            assessment_context = previous["assessment_context_fingerprint"] if historical else context
+            notes, records = self.reusable(previous, assessment_context)
             reused = {item["number"] for note in notes for item in note["items"]}
+            # A partial historical investigation cannot support complete-source
+            # synthesis. Mixing new and old bases would obscure its provenance.
+            if historical and reused != {entry["number"] for entry in self.entries}:
+                notes, records, reused = [], [], set()
+                historical, origin, assessment_context = False, head, context
             barrier = previous.get("stage_barrier")
             active = previous.get("stage_candidate")
             stage = previous.get("active_stage")
@@ -492,7 +537,10 @@ class Planner:
                           "source_fingerprint": self.binding,
                           "source_hashes": {str(entry["number"]): entry["source_sha256"]
                                             for entry in self.entries if entry["number"] in reused},
-                          "input_bindings": input_bindings(self.entries), "assessment_context_fingerprint": context,
+                          "input_bindings": input_bindings(self.entries),
+                          "assessment_context_fingerprint": assessment_context,
+                          "assessment_base_sha": origin,
+                          "assessment_reuse_mode": "verified_progress" if historical else "same_base",
                           "base_sha": head, "expected_head": head, "roadmap": None,
                           "assessments": notes, "reason": None, "reused_assessments": len(notes),
                           "reused_issues": sorted(reused), "child_state": None,

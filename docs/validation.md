@@ -5,6 +5,43 @@ control-flow behavior, not long-term autonomous effectiveness or customer value.
 Raw mission state, account metadata, and host transcripts are kept private and
 are not included in this repository.
 
+## Workflow efficiency evidence on 2026-11-13
+
+Local fixtures use instantaneous simulated models with real Git, operator
+verification and separate review. A two-issue, two-stage regression originally
+exhausted its ten-call budget before implementing the second issue: it repeated
+both source investigations at the phase boundary. Retaining complete historical
+notes across verified batch progress lets it finish both issues in ten calls
+instead of requiring twelve. The second roadmap still inspects the first
+accepted change, and each issue still receives current-base detail planning,
+operator verification and independent review. Changed inputs, external bases,
+incomplete notes, missing receipts, stop and unknown cleanup retain their gates.
+
+The selected-task fixture drops from 54 to 48 Git helper invocations; a cold
+single-issue fixture drops from 80 to 72, with nine additional direct Git
+validation launches unchanged. Detached HEAD and SHA checks now share one
+command. Short command supervision wakes on process exit instead of always
+sleeping through a 50 ms polling interval. Suspended Windows launch, Job
+assignment, descendant cleanup and staged-tree materialization remain intact.
+Ten alternating before/after pairs on one Windows host measured median contained
+Git commands at 296.5/253.4 ms and identity checks at 866.3/408.4 ms. These are
+bounded local measurements; separate full-pipeline trials were noisy and do not
+establish an overall wall-time speedup or superiority to direct coding tools.
+
+Desktop protocol regressions demonstrate delayed work arriving through one
+`desktop_next(wait_seconds=...)` call while other MCP tools remain responsive.
+Cancelling an empty MCP wait leaves later requests available to another worker.
+The default stays immediate; explicit waits are bounded to 30 seconds and the
+stored deadline. Waiting preserves claim ownership, review contexts, budgets
+and project authorization. This reduces empty host round trips; it does not
+speed up model reasoning, create parallel host contexts or wake idle clients.
+
+A whole-backlog audit performs more work than a single selected coding task.
+Independent review and deterministic checks are deliberate additional work;
+this evidence measures avoided overhead without removing those checks.
+No authenticated model/API calls or dollar-cost measurements were used for
+these efficiency regressions. Raw benchmarks remain outside the repository.
+
 ## Staged backlog planning evidence on 2026-11-11
 
 A regression with 93 captured issues reproduced planning starvation against the

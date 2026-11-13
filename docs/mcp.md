@@ -128,7 +128,7 @@ controls reject repository state so they cannot bypass observation policy.
 
 | Tool | Inputs | Effect |
 | --- | --- | --- |
-| `desktop_next` | `name`, `worker_id`, `context_id`, optional `kind` | Claim one pending phase. |
+| `desktop_next` | `name`, `worker_id`, `context_id`, optional `kind`, `wait_seconds` | Claim one phase; optionally wait for work, control closure or the existing deadline. |
 | `desktop_submit` | `name`, `request_id`, `token`, `worker_id`, `context_id`, `payload`, `work_stopped`, optional `kind` | Validate and record the claimed request's result. |
 | `desktop_cancel` | The same claim identity and `work_stopped`, without `payload`; optional `kind` | Cancel a claimed request after host work has ended. |
 
@@ -139,6 +139,11 @@ identity, and submit only a payload matching that request's schema. Complete or
 stop all phase shells, tasks, and subagents before declaring
 `work_stopped: true`. Review needs a fresh host context, not a renamed identity
 in the implementation context. See the [desktop contract](desktop.md#phase-contract).
+
+`wait_seconds` defaults to `0`; active workers should use `20` to avoid repeated
+empty tool calls. It accepts finite numbers from `0` to `30`. The bounded wait
+does not block submissions or stop tools on the server event loop, and preserves
+claim ownership, project allowlisting, fresh review contexts and stored limits.
 
 An active request with an unknown or expired outcome is quarantined rather than
 automatically reassigned. Stop external host work, inspect the worktree, and use

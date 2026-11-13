@@ -109,7 +109,7 @@ def assert_identity(path: Path, expected_head: str, git_file: bytes):
     pointer = plain_path(path / ".git")
     if not pointer.is_file() or pointer.read_bytes() != git_file:
         raise RuntimeError("Worker changed its Git worktree identity")
-    if git(path, "rev-parse", "HEAD") != expected_head or git(path, "rev-parse", "--abbrev-ref", "HEAD") != "HEAD":
+    if git(path, "rev-parse", "HEAD", "--symbolic-full-name", "HEAD").splitlines() != [expected_head, "HEAD"]:
         raise RuntimeError("Worker changed or attached its base HEAD; integration refused")
 
 

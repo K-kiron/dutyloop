@@ -172,7 +172,7 @@ dutyloop issues run --state ../issue-state
 
 执行新工作前必须有完整且有效的路线图。执行遵循阶段顺序和依赖，只针对当前基线上的下一项可执行 issue 详细规划，再依次实施、运行操作者检查并单独复核。前一阶段未完成时不能跳到后一阶段。`queue.batch_size` 限制单次实施的 issue 数量；分析、规划、重试和执行共用跨运行保留的调用与时间额度。
 
-运行中发现待答问题或实施失败时，会保留已有分析，并根据 issue 的实时状态和阶段门槛限制执行，将调用额度留给可推进的修复。来源或操作者意图变化后，只有整块输入绑定、基线、授权范围和里程碑背景均未变化的已完成分析块才可复用；变化的分块重新分析后，再生成新的全局路线图。基线、授权范围或里程碑背景变化时，必须重新调查。
+运行中发现待答问题或实施失败时，会保留已有分析，并根据 issue 的实时状态和阶段门槛限制执行，将调用额度留给可推进的修复。同一基线和规划授权下，来源或操作者意图变化只重新调查受影响的分块。阶段切换时，若输入未变且代码变化全部来自本批次已经验收的连续修改，可以沿用完整的历史调查笔记；仍需检查当前代码、更新全局路线图，并为下一项 issue 生成当前基线上的详细计划。外部基线变化或规划授权变化仍需重新调查。详见[规划复用规则](docs/issues.md#prepare-and-inspect-plans)。
 
 经证据确认、发生在任务派发前的 checkout 准备失败，可以[在同一批次中显式恢复](docs/issues.md#workspace-preparation-failures)。先检查保留的工作，执行 `dutyloop issues recover --state ../issue-state --acknowledge`，再检查状态，并对同一状态目录执行 `dutyloop issues start` 或 `dutyloop issues run`。仍有效的已完成分析和操作者决定会保留；恢复不重置预算或截止时间、不清除停止记录，也不允许任意阻塞任务重新运行。
 
@@ -239,6 +239,8 @@ dutyloop mcp --root ../mission-states --allow-project /absolute/path/to/project
 ```
 
 工具支持持续任务及 issue 批次的创建、启动、状态、事件、停止和显式恢复；issue 决策使用 `issues_resolve`。桌面 worker 通过 `desktop_next`、`desktop_submit` 和 `desktop_cancel` 领取并返回阶段结果。创建任务不会开始工作。按照 [MCP 配置](docs/mcp.md)设置客户端和项目白名单；使用当前对话时参照[桌面指南](docs/desktop.md)。MCP 能连接并不能证明宿主能够完整执行工作。
+
+活跃的桌面 worker 可使用 `desktop_next(..., wait_seconds=20)`，在一次有界调用内等待任务，减少空轮询。独立 worker 可以并发等待，提交结果和停止工具仍可响应。将全量待办审计与单条开发指令比较前，请先查看[效率实测及其边界](docs/validation.md#workflow-efficiency-evidence-on-2026-11-13)。
 
 </details>
 

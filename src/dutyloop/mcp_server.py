@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+import math
 import re
 import sys
 import time
@@ -298,16 +300,28 @@ class ControlPlane:
 
     @staticmethod
     def _closed(snapshot):
-        return (snapshot["status"] in {"completed", "limited", "blocked", "stopped"}
+        return (snapshot["status"] in {"completed", "limited", "blocked", "stopped", "unknown"}
                 or snapshot.get("stop_requested")
                 or snapshot.get("deadline") is not None and snapshot["deadline"] <= time.time())
 
-    def desktop_next(self, name: str, worker_id: str, context_id: str, kind: str = "issues") -> dict:
+    def desktop_next(self, name: str, worker_id: str, context_id: str, kind: str = "issues",
+                     wait_seconds: float = 0) -> dict:
         from .desktop import DesktopQueue
-        state, snapshot = self._desktop_state(name, kind)
-        if self._closed(snapshot):
-            return {"status": snapshot["status"], "reason": snapshot.get("reason"), "work_available": False}
-        return DesktopQueue(state).claim(worker_id, context_id)
+        if (isinstance(wait_seconds, bool) or not isinstance(wait_seconds, (int, float))
+                or not 0 <= wait_seconds <= 30 or not math.isfinite(wait_seconds)):
+            raise ValueError("wait_seconds must be a finite number from 0 to 30")
+        until = time.monotonic() + wait_seconds
+        while True:
+            state, snapshot = self._desktop_state(name, kind)
+            if self._closed(snapshot):
+                return {"status": snapshot["status"], "reason": snapshot.get("reason"), "work_available": False}
+            job = DesktopQueue(state).claim(worker_id, context_id)
+            remaining = until - time.monotonic()
+            if job["status"] != "waiting" or remaining <= 0:
+                return job
+            if snapshot.get("deadline") is not None:
+                remaining = min(remaining, max(0, snapshot["deadline"] - time.time()))
+            time.sleep(min(.1, remaining))
 
     def desktop_submit(self, name: str, request_id: str, token: str, worker_id: str,
                        context_id: str, payload: dict, work_stopped: bool, kind: str = "issues") -> dict:
@@ -350,6 +364,7 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
     """Build the official SDK server without starting a mission or opening credentials."""
     try:
         from mcp.server.fastmcp import FastMCP
+        from pydantic import Field
     except ImportError as error:
         raise RuntimeError("MCP support is optional; install dutyloop[mcp] to enable this command.") from error
 
@@ -472,9 +487,18 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
         return _tool_result(lambda: controller.repository_set_mode(name, mode))
 
     @server.tool()
-    def desktop_next(name: str, worker_id: str, context_id: str, kind: str = "issues") -> dict:
-        """Claim one desktop phase. Follow its exact cwd, prompt and schema. Review needs a fresh reviewer context; IDs are self-reported. Poll waiting responses only while the host task is active."""
-        return _tool_result(lambda: controller.desktop_next(name, worker_id, context_id, kind))
+    async def desktop_next(name: str, worker_id: str, context_id: str, kind: str = "issues",
+                           wait_seconds: float = Field(default=0, strict=True, ge=0, le=30, allow_inf_nan=False)) -> dict:
+        """Claim one desktop phase. Use wait_seconds=20 while awaiting the next phase in an active host task (0 is immediate; maximum 30). Follow its exact cwd, prompt and schema. Review needs a fresh reviewer context; IDs are self-reported. Waiting ends on work, control closure, or deadline."""
+        # Yield between immediate claims so cancellation cannot leave a worker
+        # thread claiming later requests after the host has stopped awaiting it.
+        until = time.monotonic() + wait_seconds
+        while True:
+            job = _tool_result(lambda: controller.desktop_next(name, worker_id, context_id, kind))
+            remaining = until - time.monotonic()
+            if job.get("status") != "waiting" or remaining <= 0:
+                return job
+            await asyncio.sleep(min(.1, remaining))
 
     @server.tool()
     def desktop_submit(name: str, request_id: str, token: str, worker_id: str, context_id: str,

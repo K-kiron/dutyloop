@@ -93,7 +93,11 @@ instead of repeatedly investigating unchanged inputs. When genuine inputs
 change, the chunked path can reuse only whole completed chunks whose source,
 admission and decision bindings are unchanged on the same base, authority and
 milestone context. Changed chunks are reassessed before a fresh global roadmap;
-base, authority or milestone changes require fresh assessment of every chunk.
+external base, planning authority or milestone changes require fresh assessment
+of every chunk. At a phase boundary, complete historical investigations can
+survive a chain of this batch's verified changes with unchanged input bindings.
+The global roadmap still reassesses current code; detailed plans remain bound
+to the execution base. See the [full reuse rules](issues.md#prepare-and-inspect-plans).
 Status reports `planning.reused_assessments` and `planning.reused_issues`.
 
 ## One task across several attempts
