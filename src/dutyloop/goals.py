@@ -158,7 +158,7 @@ class GoalSupervisor(Supervisor):
             for item in assignments:
                 for path in item["paths"]:
                     target = plain_path(cwd / relative_path(path))
-                    if cwd not in target.parents or not target.exists():
+                    if (target != cwd and cwd not in target.parents) or not target.exists():
                         raise ValueError("Investigation scope must exist inside the project")
             goal = {"revision": revision + 1, "base_sha": self.store.control()["accepted_head"],
                     "plan_status": payload["status"], "operator_decision": old.get("operator_decision"),

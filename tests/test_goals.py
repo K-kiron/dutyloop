@@ -177,7 +177,8 @@ def test_goal_stop_during_review_cannot_mark_completed(goal):
     assert not result.get("goal", {}).get("completion")
 
 
-def test_goal_investigators_are_distinct_parallel_read_only_assignments(goal):
+@pytest.mark.parametrize("scope", ["app.py", "."])
+def test_goal_investigators_are_distinct_parallel_read_only_assignments(goal, scope):
     _, state, spec = goal
     initialize(spec, state)
     rendezvous = threading.Barrier(2)
@@ -187,7 +188,7 @@ def test_goal_investigators_are_distinct_parallel_read_only_assignments(goal):
         def __init__(self):
             super().__init__()
             self.plan["investigations"] = [
-                {"key": key, "role": role, "question": "Check current behavior", "paths": ["app.py"]}
+                {"key": key, "role": role, "question": "Check current behavior", "paths": [scope]}
                 for key, role in [("behavior", "behavior investigator"), ("regression", "regression investigator")]]
 
         def run(self, request, should_stop):
@@ -204,6 +205,21 @@ def test_goal_investigators_are_distinct_parallel_read_only_assignments(goal):
     assert len(worktrees) == 2
     assert all(item["state"] == "finished" for item in result["goal"]["investigations"])
     assert result["invocations"] == 5
+
+
+@pytest.mark.parametrize("scope", ["../outside", "missing.py"])
+def test_invalid_investigation_scope_blocks_before_dispatch(goal, scope):
+    _, state, spec = goal
+    initialize(spec, state)
+    worker = GoalWorker()
+    worker.plan["investigations"] = [
+        {"key": "behavior", "role": "Investigator", "question": "Check behavior", "paths": [scope]}]
+    result = run(state, driver=worker)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "goal_plan_invalid"
+    assert worker.phases == ["discover", "discover"]
+    assert not result.get("goal")
+    assert not result["tasks"]
 
 
 def test_already_satisfied_goal_requires_checks_and_independent_review(goal):
