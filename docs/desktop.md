@@ -56,6 +56,49 @@ WSL and remote environments use their own executables and paths; configure and
 verify those separately. If the host cannot open the returned `cwd`, stop before
 claiming work in a different checkout.
 
+## Check host readiness before starting
+
+Call `desktop_readiness(name="csv-goal", kind="mission")` before creating or
+starting a desktop mission. Use `kind="issues"` or `kind="repository"` for
+those workflows. This read-only tool can run before state exists. Inspect its
+`required_tools`, `required_capabilities`, `missing_capabilities`, and generated
+`host_prompt`; adapt the prompt to the host's actual worker tools.
+
+The required tools are the selected workflow's `create`, `start`, `status`,
+`events`, and `stop` tools, plus `desktop_readiness`, `desktop_next`,
+`desktop_submit`, and `desktop_cancel`. Verify that the host can call the
+mutating tools under its existing permission policy and open returned local
+worktrees. A readable status response alone does not establish those abilities.
+
+Declare only capabilities that are actually available, then call readiness
+again with a `capabilities` object containing these boolean fields:
+
+| Capability | Host requirement |
+| --- | --- |
+| `mcp_mutations` | Permission for creation, start, stop, claim, submit, and cancellation. |
+| `managed_worktree_access` | Workers can inspect and execute tools at each returned `cwd`. |
+| `fresh_worker_contexts` | Every phase uses an actual fresh worker context, including review. |
+| `spawn_workers` | The coordinator can launch real workers and retain their identities. |
+| `stop_and_join` | Workers can stop and join their tools and descendants before acknowledgement. |
+| `cancel_workers` | The coordinator can cancel workers and wait for termination. |
+
+`ready: true` means all required capabilities were declared true. Its
+`readiness_scope` is `host_declaration`: DutyLoop has not independently proved
+permissions, worker isolation, cancellation, or process containment. Missing
+capabilities remain unknown or explicitly unavailable. If a capability is
+missing or tool approval is denied, report the exact limitation and stop before
+create/start. Keep the host's permission policy intact; readiness does not
+override it. A compatible local coding host or configured native driver is an
+alternative. No readiness call launches workers or wakes an idle conversation.
+
+Keep the current conversation as coordinator. Launch a real fresh worker for
+each phase, with stable identities for that actual worker/context. The
+coordinator does not claim or implement phases. Launch independent read-only
+requests concurrently within the configured cap, using distinct real workers;
+renaming one context does not create isolation. If the host cannot run workers
+concurrently, disclose that limitation and use fresh workers serially only while
+the existing request deadlines allow.
+
 ## Start an issue batch
 
 For ongoing intake, use the [repository workflow](repository.md) and
@@ -76,12 +119,20 @@ spec path and batch name. It authorizes the configured batch; the example spec
 keeps delivery local.
 
 ```text
-Use DutyLoop for the issue batch maintenance-issues. Read the JSON spec at
-/absolute/path/to/desktop-issues.json and call issues_create(name="maintenance-issues",
-spec=<that JSON object>), then issues_start(name="maintenance-issues").
+Use DutyLoop for the issue batch maintenance-issues.
+First call desktop_readiness(name="maintenance-issues", kind="issues"). Check
+its required_tools and capabilities against the actual host, then call it again
+with only truthful capability declarations. If anything is missing or denied,
+report that limitation and stop before create/start. Preserve the host's current
+permission policy. Use the returned host_prompt as the coordinator instructions.
 
-Use a stable worker_id for this worker and a distinct context_id for each actual
-host context. Call desktop_next(name="maintenance-issues", worker_id=<worker>,
+Read the JSON spec at /absolute/path/to/desktop-issues.json and call
+issues_create(name="maintenance-issues", spec=<that JSON object>), then
+issues_start(name="maintenance-issues") within that configured authority.
+
+Keep this conversation as coordinator. Launch a fresh worker for each phase.
+Use a stable worker_id and context_id for each actual worker/context.
+Each worker calls desktop_next(name="maintenance-issues", worker_id=<worker>,
 context_id=<context>, kind="issues", wait_seconds=20). This waits for work in
 one bounded call. If it returns waiting, read issues_status and call again while
 the runner is active. Keep roadmap stage
@@ -91,7 +142,9 @@ batch state or when the batch cannot progress without an operator decision.
 
 For concurrent read-only assessment requests, use separate actual workers or
 contexts, each with its own worker_id and context_id and its own claimed request.
-A single worker can instead service requests serially within their deadlines.
+Launch independent read-only requests concurrently within the configured cap.
+If the host cannot do this, disclose the limitation and launch fresh workers
+serially only within the existing request deadlines.
 
 For each request, follow its prompt and schema at its exact cwd. Respect its
 deadline and scope. After implementation, have a fresh subagent or conversation
@@ -129,8 +182,10 @@ Chunk assessments use a concurrency ceiling of `queue.planning_workers`
 the single-call roadmap path. Multiple desktop workers need distinct
 `worker_id` and `context_id` values representing their actual host contexts;
 changing identity strings in one context does not create concurrent workers.
-One host worker may service the queued requests serially, subject to the shared
-wall deadline. Native adapters dispatch concurrent assessments automatically.
+Launch independent read-only requests concurrently within the configured cap.
+If the host cannot do this, disclose the limitation and service queued requests
+with fresh workers serially only within their deadlines and the shared wall
+limit. Native adapters dispatch concurrent assessments automatically.
 Every chunk uses the same frozen base. Out-of-order completions remain bound to
 their source chunks; synthesis waits for complete coverage. Status exposes
 `planning.workers`, `planning.chunks` and `planning.child_states` for progress.
@@ -166,10 +221,84 @@ For a standing mission, use [desktop-mission.json](../examples/desktop-mission.j
 tool. Monitor with `mission_status` and `mission_events`. Omitted `kind` means
 `issues`; always supply it explicitly when switching between workflows.
 
+## Finish a finite goal
+
+Copy [desktop-goal.json](../examples/desktop-goal.json) outside the target
+repository and replace its paths, checks, and goal criteria with your actual
+requirements. It uses `mode: "goal"`, explicit `goal_acceptance`, and the same
+mission tools as a standing mission. A minimal coordinator instruction is:
+
+```text
+Coordinate the finite goal csv-goal using the JSON spec at
+/absolute/path/to/desktop-goal.json. Before create/start, call
+desktop_readiness(name="csv-goal", kind="mission"). Inspect its required_tools,
+capabilities, and host_prompt. Check actual host access, fresh worker spawning,
+cancellation, and stop/join support. Declare only available capabilities and
+call readiness again. If any requirement is missing or approval is denied,
+report it and stop before create/start; preserve the host permission policy.
+
+Follow the returned host_prompt. Keep this conversation as coordinator and use
+fresh actual workers for every claimed phase. Read the operator spec, then call
+mission_create(name="csv-goal", spec=<that JSON object>) and
+mission_start(name="csv-goal") within its authority. Each worker calls
+desktop_next with name="csv-goal", kind="mission", its own stable worker_id
+and actual context_id, and wait_seconds=20. Follow the exact returned cwd,
+prompt, schema, scope, and deadline. Stop and join all phase tools and descendants
+before submitting or cancelling with work_stopped=true. Let DutyLoop run checks,
+review gates, and commits. Continue until completed, limited, stopped, unknown,
+or blocked pending an operator decision.
+```
+
+The planner records durable tasks and dependencies. It chooses zero to three
+scoped read-only investigations within `team.max_workers` (default `3`, range
+`1`–`3`); separate actual workers can service them concurrently. A `discover`
+phase can therefore be planning or investigation: follow its prompt and schema.
+Implementation, operator verification, review, and integration stay serial.
+The outer invocation limit counts each handoff; wall time includes host waiting.
+
+A task's separate review also assesses every whole-goal criterion against the
+checked tree. A final task can complete the goal without a redundant final
+model call. An empty plan for an already satisfied goal still needs operator
+checks and fresh review. No work alone does not imply completion. Failed
+whole-goal assessment can trigger bounded replanning (`max_plan_revisions`
+defaults to `2` total revisions including the initial plan, maximum `5`);
+an unresolved human decision blocks that task and its dependents while unrelated
+ready tasks continue. A whole-plan decision blocker stops all task execution.
+Standing missions omit `mode` or use `"standing"` and continue discovery.
+
+To generate a spec locally, `configure` supports `--mode goal`, repeatable
+`--acceptance`, `--max-workers` (`1`–`3`), and `--max-plan-revisions` (`1`–`5`).
+Add `--driver desktop` to the complete [configuration example](configuration.md#generate-a-goal-configuration).
+
+If status reports `goal_requires_operator_decision`, inspect the blocked task
+and obtain the operator's explicit decision. For an actual task key such as
+`csv-format`, record it without creating a replacement mission:
+
+```text
+mission_resolve(name="csv-goal", key="csv-format",
+                decision="Preserve empty fields as documented.")
+mission_status(name="csv-goal")
+mission_start(name="csv-goal")
+```
+
+Start again only when the returned status is `ready`. The task resumes in the
+same plan with its dependencies, acceptance obligations, and budget preserved.
+Use the reserved `key="@goal"` for a whole-plan decision blocker; this requests
+a bounded replan. `@goal` cannot be a candidate task slug, and plain `goal`
+always refers to a task key. `mission_resolve` does not reopen
+completed/stopped goals, accept unknown work, reset limits, or bypass security
+blockers. The CLI equivalent is `dutyloop resolve --state ... --key ... --decision ...`.
+
+The criteria and check commands are operator input. A worker's claim that the
+goal is done is insufficient. Unknown claims keep the existing quarantine and
+explicit recovery requirements below; recovery never renews the original
+invocation budget or deadline.
+
 ## Phase contract
 
 | Tool | Required handoff inputs | Effect |
 | --- | --- | --- |
+| `desktop_readiness` | Optional `name`, `kind`, `capabilities` | Read the required tools, host capability declarations, and generated coordinator prompt without creating state. |
 | `desktop_next` | `name`, `worker_id`, `context_id`; optional `kind`, `wait_seconds` | Claim one pending phase, optionally waiting up to 30 seconds for work. |
 | `desktop_submit` | `name`, `request_id`, `token`, `worker_id`, `context_id`, `payload`, `work_stopped`; optional `kind` | Submit the claiming worker's result for validation. |
 | `desktop_cancel` | The same identity and `work_stopped`, without `payload`; optional `kind` | Cancel the claimed phase after host work has stopped. |
@@ -181,6 +310,8 @@ for another worker or put tokens in public artifacts. Follow the returned
 schema rather than assuming all phases accept the same JSON. For example, an
 implementation payload contains `summary` and `completed`; a review payload
 contains `accepted`, `summary`, and `findings`.
+Goal review also returns `goal_completed` and criterion-by-criterion evidence;
+the returned schema is authoritative for that request.
 
 `wait_seconds` defaults to `0` for an immediate response; use `20` while actively
 waiting for the next phase. It must be a finite number from `0` to `30`. Waiting
@@ -196,7 +327,7 @@ leave commit creation and GitHub delivery to DutyLoop. The supervisor runs the
 operator's verification commands and checks the staged snapshot before accepting
 a change. A worker's `completed: true` does not establish acceptance.
 
-Review needs an actual fresh subagent or new context to claim the phase, with a
+Every phase needs an actual fresh worker context. Review must also have a
 different context identity from every prior implementation context. If your
 host cannot provide that, stop and report
 the limitation. Changing a `context_id` string in the same conversation does
@@ -247,7 +378,7 @@ work and does not guarantee termination of desktop-owned work.
 
 Issue delivery still defaults to local. PR publication and merging require the
 existing explicit configuration; merge mode retains its required-check and
-branch-protection gates. Standing missions remain local. Native CLI drivers keep
+branch-protection gates. Standing and finite-goal missions remain local. Native CLI drivers keep
 their existing launch behavior when selected.
 
 Official host documentation establishes configuration paths, not a successful

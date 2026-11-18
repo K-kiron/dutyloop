@@ -36,6 +36,10 @@ DutyLoop 是基于现有编程工具的**本地、持久化仓库开发 super-ag
 
 通过验收的改动会积累在**独立的本地 Git 分支**上，并保留任务依据、检查结果和复核记录。 每项任务通过后，DutyLoop 会继续发现工作，直到达到运行上限、遇到阻塞，或收到你的停止指令。
 
+目标有明确终点时，可以使用**有限目标模式**：设置 `mode: "goal"` 并提供明确的
+`goal_acceptance` 验收标准。DutyLoop 持久化任务及依赖，在操作者检查和单独复核支持
+全部目标标准后停止。省略 `mode` 时，仍按持续职责运行。
+
 已有待办 issue 时，可以使用 [issue 模式](#处理-github-issue)：结合仓库当前阶段分析捕获的开放 issue，形成分阶段路线图，再详细规划并实施下一项可执行工作。默认产出本地分支；也可以明确配置创建 PR、等待 CI 后合并，以及验收后关闭 issue。
 
 需要持续负责仓库时，使用[仓库维护模式](docs/repository.md)：增量接收新 issue，
@@ -105,7 +109,12 @@ python -m dutyloop desktop-config --client codex --root /absolute/path/to/dutylo
 
 Claude 使用 `--client claude` 输出 JSON 配置。命令只打印配置，由你合并到宿主的本地 MCP 设置；不会修改宿主设置或开始工作。将[桌面 issue 配置](examples/desktop-issues.json)或[持续任务配置](examples/desktop-mission.json)复制到目标仓库之外，替换路径和检查命令，再按[桌面交接指南](docs/desktop.md)连接并使用其中可直接粘贴的宿主提示。
 
-宿主领取每个阶段，在 DutyLoop 指定的受管理 checkout 中执行，并按返回的 schema 提交结果。复核必须使用新的子 agent 或对话上下文。DutyLoop 无法终止桌面对话启动的 shell 或子 agent；提交或取消前必须完成或停止这些工作。目前尚未在实际 Codex/Claude 桌面应用中验证完整执行；仅连接 MCP 不会唤醒空闲对话。
+创建或启动前，先调用 `desktop_readiness`，检查其 `required_tools`、能力要求和生成的
+`host_prompt`。能力声明来自宿主自报，不能证明实际权限，也不能覆盖宿主审批策略。
+当前对话负责协调，每个阶段使用真实的新 worker 上下文，包括复核。worker 在 DutyLoop
+指定的受管理 checkout 中执行，并按返回的 schema 提交结果。DutyLoop 无法终止桌面对话
+启动的 shell 或子 agent；提交或取消前必须完成或停止这些工作。目前尚未在实际
+Codex/Claude 桌面应用中验证完整执行；仅连接 MCP 不会唤醒空闲对话。
 
 ## 运行项目任务
 
@@ -143,6 +152,53 @@ dutyloop run --state ../mission-state
 `doctor` 检查安装和版本，不验证认证状态，也不调用模型。 `init` 从已提交的 `HEAD` 创建职责分支和持久状态；未提交的改动不会复制到任务中。 状态目录应放在目标仓库之外，并确保新 worktree 能使用项目所需的依赖。
 
 在 Windows 上，DutyLoop 为受管理的 Git 命令传入 `-c core.longpaths=true`，不修改仓库或全局 Git 配置。Git 元数据路径过深时，仍可能需要更短的状态目录根路径。详见[检出失败与恢复](docs/operations.md#windows-checkout-paths)。
+
+### 完成有限目标
+
+把 [goal-mission.json](examples/goal-mission.json)，或供当前桌面宿主使用的
+[desktop-goal.json](examples/desktop-goal.json)，复制到目标仓库之外。替换路径、目标、
+验收标准和检查命令，填写你的真实需求。原生执行沿用上面的 `validate`、`init` 和
+`run`；桌面执行在就绪检查后使用 `mission_create`、`mission_start`，并明确传入
+`kind="mission"`。
+
+```json
+{
+  "mode": "goal",
+  "goal_acceptance": [
+    "CSV import/export preserves documented values, including empty fields and embedded commas.",
+    "Regression coverage passes and the public API and file format remain compatible."
+  ],
+  "team": {"max_workers": 3},
+  "max_plan_revisions": 2
+}
+```
+
+这段 JSON 用于补充普通 mission 配置。规划器保存持久任务及依赖，按需要选择 0–3 项
+有明确范围的只读调查，并由 `team.max_workers` 限制并发数。调查可以并行；实施、
+操作者检查、复核和集成保持串行。每次任务复核同时检查整个目标，因此最后一项经验证
+的任务可以直接完成目标，无需重复的最终模型调用。如果目标已经满足，空计划仍必须
+通过操作者检查和新上下文复核。没有剩余任务本身不能证明完成。
+
+可以使用 `configure --mode goal` 和可重复的 `--acceptance` 参数生成经验证的配置，
+通过 `--max-workers` 和 `--max-plan-revisions` 设置目标模式上限，详见
+[配置示例](docs/configuration.md#generate-a-goal-configuration)。
+
+整体验收未通过可以触发有上限的重新规划；计划总修订次数上限默认 `2`，最大 `5`。
+缺少人工决定时，该任务及依赖它的任务暂停，无关且已就绪的任务仍可继续；整个计划
+需要决定时才阻塞全部任务。查看状态中显示的任务键，再记录你的明确决定：
+
+```console
+dutyloop resolve --state ../mission-state --key csv-format --decision "Preserve empty fields as documented."
+dutyloop run --state ../mission-state
+```
+
+该任务沿用同一计划、未完成义务和预算继续执行。整个计划需要人工决定时，使用保留键
+`@goal` 请求有上限的重新规划；普通 `goal` 始终指任务键。桌面宿主
+使用 `mission_resolve(name, key, decision)`，检查状态后再启动。决定接口不能重新打开
+已完成或已停止的目标，也不能绕过结果不明的工作或安全阻塞。规划、调查、尝试和复核
+共用原有调用及时间上限；
+结果不明的工作继续隔离，显式恢复不重置预算。测试和验收标准由你提供，目标文本
+本身不会产生独立的正确性检查。
 
 ### 监控与控制
 

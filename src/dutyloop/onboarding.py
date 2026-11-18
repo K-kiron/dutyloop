@@ -54,7 +54,9 @@ def validation_report(spec: dict, state_dir: Path) -> dict:
 def write_configuration(*, project: Path, output: Path, mission: str,
                         allowed_paths: list[str], verification: list[str],
                         driver: str = "codex", model: str | None = None,
-                        max_invocations: int = 12, max_wall_seconds: float = 1800) -> dict:
+                        max_invocations: int = 12, max_wall_seconds: float = 1800,
+                        mode: str = "standing", goal_acceptance: list[str] | None = None,
+                        max_workers: int | None = None, max_plan_revisions: int | None = None) -> dict:
     """Write a complete, validated spec exclusively; never overwrite user input."""
     commands = []
     for text in verification:
@@ -70,6 +72,13 @@ def write_configuration(*, project: Path, output: Path, mission: str,
         "driver": {"name": driver} if driver == "desktop" and model is None else {"name": driver, "model": model},
         "limits": {"max_invocations": max_invocations, "max_wall_seconds": max_wall_seconds},
     }
+    spec["mode"] = mode
+    if goal_acceptance is not None:
+        spec["goal_acceptance"] = goal_acceptance
+    if max_workers is not None:
+        spec["team"] = {"max_workers": max_workers}
+    if max_plan_revisions is not None:
+        spec["max_plan_revisions"] = max_plan_revisions
     report = validation_report(spec, project.parent / ".dutyloop-configuration-check")
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".mission-", suffix=".tmp", dir=output.parent)
@@ -99,6 +108,22 @@ def human_status(snapshot: dict) -> str:
         f"Calls: {snapshot.get('invocations', 0)}/{limits.get('max_invocations', '?')}",
         f"Tasks: {counts['accepted']} accepted, {counts['rejected']} rejected, {counts['unknown']} unknown",
     ]
+    if snapshot.get("spec", {}).get("mode", "standing") == "goal":
+        goal = snapshot.get("goal")
+        lines.append("Mode: finite goal")
+        if not goal:
+            lines.append("Goal plan: pending")
+        else:
+            accepted = {task["key"] for task in tasks if task.get("state") == "accepted"}
+            pending = [node for node in goal.get("tasks", []) if node["candidate"]["key"] not in accepted]
+            blocked = [node["candidate"]["key"] for node in pending if node.get("blocked_reason") and not node.get("decision")]
+            lines.append(f"Goal plan: revision {goal['revision']}; {len(pending)} pending; {len(blocked)} need decisions")
+            if goal.get("plan_status") == "blocked" and not goal.get("operator_decision"):
+                lines.append("Whole-goal decision: required (key: @goal)")
+            if blocked:
+                lines.append("Blocked task keys: " + ", ".join(blocked))
+            completion = goal.get("completion")
+            lines.append("Goal completion: " + (f"accepted at {completion['head']}" if completion else "pending"))
     if snapshot.get("reason"):
         lines.append(f"Reason: {snapshot['reason']}")
     calls = snapshot.get("calls", [])

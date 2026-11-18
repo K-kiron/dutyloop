@@ -50,10 +50,32 @@ def _unknown(mapping, allowed, label):
 
 
 def validate_spec(spec: dict, state_dir: Path) -> dict:
-    allowed = {"version", "mission", "project", "allowed_paths", "verification", "limits", "constraints", "kinds", "research_domains", "driver", "team", "poll_seconds", "max_task_attempts", "max_failures", "branch", "call_timeout_seconds", "max_changed_files"}
+    allowed = {"version", "mission", "project", "allowed_paths", "verification", "limits", "constraints", "kinds", "research_domains", "driver", "team", "poll_seconds", "max_task_attempts", "max_failures", "branch", "call_timeout_seconds", "max_changed_files", "mode", "goal_acceptance", "max_plan_revisions"}
     _unknown(spec, allowed, "spec")
     if type(spec.get("version", 1)) is not int or spec.get("version", 1) != 1:
         raise ValueError("Only spec version 1 is supported")
+    mode = spec.get("mode", "standing")
+    if mode not in ("standing", "goal"):
+        raise ValueError("mode must be standing or goal")
+    goal_acceptance = spec.get("goal_acceptance")
+    max_plan_revisions = spec.get("max_plan_revisions")
+    if mode == "goal":
+        if not isinstance(goal_acceptance, list) or not goal_acceptance or any(
+            not isinstance(item, str) or not item.strip() or "\x00" in item for item in goal_acceptance
+        ):
+            raise ValueError("goal_acceptance must be a nonempty list of nonempty strings")
+        goal_acceptance = [item.strip() for item in goal_acceptance]
+        if len(set(goal_acceptance)) != len(goal_acceptance):
+            raise ValueError("goal_acceptance criteria must be unique after trimming")
+        max_plan_revisions = _number(spec.get("max_plan_revisions", 2), "max_plan_revisions", 1, True)
+        if max_plan_revisions > 5:
+            raise ValueError("At most five plan revisions are supported")
+    else:
+        if goal_acceptance is not None and goal_acceptance != []:
+            raise ValueError("goal_acceptance requires goal mode")
+        if max_plan_revisions is not None:
+            raise ValueError("max_plan_revisions requires goal mode")
+        goal_acceptance = []
     mission = spec.get("mission")
     if not isinstance(mission, str) or not mission.strip() or len(mission) > 20000:
         raise ValueError("mission must contain 1..20000 characters")
@@ -103,10 +125,17 @@ def validate_spec(spec: dict, state_dir: Path) -> dict:
     if driver["name"] == "dsh" and driver.get("model"):
         raise ValueError("dsh uses its existing profile model; configure that model in the host profile")
     team = spec.get("team", {"discovery_workers": 1})
-    _unknown(team, {"discovery_workers"}, "team")
+    _unknown(team, {"discovery_workers", "max_workers"}, "team")
     workers = _number(team.get("discovery_workers", 1), "discovery_workers", 1, True)
     if workers > 3:
         raise ValueError("At most three discovery workers are supported")
+    max_workers = team.get("max_workers")
+    if mode == "goal":
+        max_workers = _number(team.get("max_workers", 3), "max_workers", 1, True)
+        if max_workers > 3:
+            raise ValueError("At most three goal workers are supported")
+    elif max_workers is not None:
+        raise ValueError("team.max_workers requires goal mode")
     kinds = spec.get("kinds", sorted(KINDS))
     if not isinstance(kinds, list) or not kinds or any(not isinstance(kind, str) or kind not in KINDS for kind in kinds):
         raise ValueError("kinds must select feature, bugfix, qa or docs")
@@ -121,10 +150,11 @@ def validate_spec(spec: dict, state_dir: Path) -> dict:
         if not isinstance(branch, str) or re.match(r"(?i)(codex|claude|chatgpt|copilot)/", branch) or subprocess.run(["git", "check-ref-format", "--branch", branch], stdin=subprocess.DEVNULL, capture_output=True, timeout=10).returncode:
             raise ValueError("branch must be a functional Git branch name")
     return {
-        "version": 1, "mission": mission.strip(), "project": str(project),
+        "version": 1, "mission": mission.strip(), "project": str(project), "mode": mode,
+        "goal_acceptance": goal_acceptance, "max_plan_revisions": max_plan_revisions,
         "allowed_paths": paths, "verification": verification, "limits": limits,
         "constraints": constraints, "kinds": kinds, "research_domains": [x.lower() for x in domains],
-        "driver": driver, "team": {"discovery_workers": workers}, "branch": branch,
+        "driver": driver, "team": {"discovery_workers": workers, "max_workers": max_workers}, "branch": branch,
         "poll_seconds": _number(spec.get("poll_seconds", 60), "poll_seconds", .05),
         "max_task_attempts": _number(spec.get("max_task_attempts", 2), "max_task_attempts", 1, True),
         "max_failures": _number(spec.get("max_failures", 3), "max_failures", 1, True),

@@ -36,6 +36,11 @@ DutyLoop is a **local, persistent super-agent for repository development**, buil
 
 Accepted changes accumulate on a **separate local Git branch**, with task rationale, verification results, and review records. Discovery continues after each accepted task, until a limit, blocker, or your stop command ends the run.
 
+For a specific finish line, use **finite-goal mode**: set `mode: "goal"` and supply
+explicit `goal_acceptance` criteria. DutyLoop records a dependency plan, works
+through eligible tasks, and stops when operator checks and a separate review
+support every goal criterion. Omitted `mode` remains a continuing standing mission.
+
 Already have a backlog? [Issue mode](#process-github-issues) assesses the repository's current stage and captured open issues, builds a phased roadmap, then detail-plans and implements the next eligible item. Delivery defaults to local branches; you can explicitly enable PR creation, CI-gated merging, and verified issue closure.
 
 For ongoing ownership, [repository mode](#maintain-a-repository) reconciles new
@@ -106,7 +111,14 @@ python -m dutyloop desktop-config --client codex --root /absolute/path/to/dutylo
 
 Use `--client claude` for Claude's JSON configuration. The command prints configuration; merge it into your host's local MCP settings. It does not write host settings or start work. Copy [the desktop issue spec](examples/desktop-issues.json) or [mission spec](examples/desktop-mission.json) outside the target repository, replace its paths and checks, then follow the [desktop handoff guide](docs/desktop.md) and its ready-to-paste host prompt.
 
-The host claims each phase, executes it in DutyLoop's exact managed checkout, and submits schema-checked results. Review needs a fresh subagent or context. DutyLoop cannot stop desktop-owned shells or subagents; finish or stop them before submitting or cancelling. Actual Codex/Claude desktop execution has not yet been verified. Connecting MCP alone does not wake an idle conversation.
+Before creation or start, call `desktop_readiness` and inspect its `required_tools`,
+capabilities, and generated `host_prompt`. Capability declarations are self-reported;
+they do not prove access or override host permissions. Keep the conversation as
+coordinator and use actual fresh workers for each phase, including review. Workers
+use DutyLoop's exact managed checkout and submit schema-checked results. DutyLoop
+cannot stop desktop-owned shells or subagents; finish or stop them before submitting
+or cancelling. Actual Codex/Claude desktop execution has not yet been verified.
+Connecting MCP alone does not wake an idle conversation.
 
 ## Run a project mission
 
@@ -145,6 +157,61 @@ dutyloop run --state ../mission-state
 `doctor` checks installation and version, without authenticating or calling a model. `init` creates the mission branch and persisted state from committed `HEAD`; uncommitted edits are not copied into the mission. Keep state outside the target repository, and make dependencies available to its fresh worktrees.
 
 On Windows, DutyLoop passes `-c core.longpaths=true` to its managed Git commands without changing repository or global Git configuration. Very deep Git metadata paths may still require a shorter state root. See [checkout failures and recovery](docs/operations.md#windows-checkout-paths).
+
+### Finish a finite goal
+
+Copy [goal-mission.json](examples/goal-mission.json), or
+[desktop-goal.json](examples/desktop-goal.json) for the current desktop host,
+outside the target repository. Replace its paths, mission, acceptance criteria,
+and check commands with your actual requirements. Use the same `validate`,
+`init`, and `run` commands above; desktop execution uses `mission_create`,
+`mission_start`, and `kind="mission"` after readiness checks.
+
+```json
+{
+  "mode": "goal",
+  "goal_acceptance": [
+    "CSV import/export preserves documented values, including empty fields and embedded commas.",
+    "Regression coverage passes and the public API and file format remain compatible."
+  ],
+  "team": {"max_workers": 3},
+  "max_plan_revisions": 2
+}
+```
+
+This fragment adds goal fields to a normal mission spec. The planner records
+durable tasks and dependencies, and may request zero to three scoped read-only
+investigations, capped by `team.max_workers`. Those investigations may run in
+parallel; implementation, operator checks, review, and integration stay serial.
+Task review also assesses the whole goal, so a verified final task can finish
+without a redundant final model call. An empty plan for an already satisfied
+goal still needs operator checks and fresh review. No remaining work alone
+does not establish completion.
+
+Use `configure --mode goal` with repeatable `--acceptance` arguments to generate
+a validated spec; `--max-workers` and `--max-plan-revisions` set its goal caps.
+See the [configuration examples](docs/configuration.md#generate-a-goal-configuration).
+
+Failed whole-goal assessment can trigger bounded replanning; the total plan
+revision cap defaults to `2`, maximum `5`. A missing human decision blocks that
+task and its dependents while unrelated ready tasks can continue; a whole-plan
+decision blocker stops all tasks. Record your decision against the exact blocked
+task key shown in status:
+
+```console
+dutyloop resolve --state ../mission-state --key csv-format --decision "Preserve empty fields as documented."
+dutyloop run --state ../mission-state
+```
+
+The task resumes in the same plan with its obligations and budget preserved.
+Use the reserved key `@goal` for a whole-plan decision blocker; it requests a
+bounded replan. Plain `goal` always refers to a task key. Desktop hosts use
+`mission_resolve(name, key, decision)`, then inspect status before starting again.
+Decisions cannot reopen completed or stopped goals, or bypass unknown work or
+security blockers. Plans, investigations, attempts, and reviews share the original
+invocation and time limits; uncertain work remains quarantined and explicit
+recovery does not renew the budget. You supply the tests and acceptance criteria;
+the mission text does not create an independent correctness check.
 
 ### Monitor and control
 

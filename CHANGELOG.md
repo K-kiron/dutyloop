@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add opt-in finite-goal missions with explicit acceptance criteria, durable
+  task dependencies, bounded planning, and up to three scoped read-only
+  investigators. Keep implementation, operator checks, review, and integration
+  serial; stop on verified whole-goal acceptance, including assessment in the
+  final task review. Standing discovery remains the default.
+- Add finite-goal configuration flags and CLI/MCP operator decisions that retain
+  pending obligations and budgets, including bounded whole-plan replanning.
+  Add read-only desktop readiness with required tools, self-reported capability
+  declarations, and a coordinator prompt without overriding host permissions.
 - Retain complete historical source investigations across verified in-batch
   progress, while reassessing current code at stage boundaries and detail-planning
   the next issue on its execution base. Reject incomplete or unbound notes,
