@@ -108,7 +108,7 @@ class Store:
         """
         with self.connection() as db:
             data = self._read(db)
-            if data["stop_requested"] or data["status"] in {"limited", "blocked", "stopped"}:
+            if data["stop_requested"] or data["status"] in {"completed", "limited", "blocked", "stopped"}:
                 return False
             reason = ("wall_time_limit" if data["deadline"] is not None and time.time() >= data["deadline"] else
                       "insufficient_task_budget" if data["spec"]["limits"]["max_invocations"] - data["invocations"] < count else None)
@@ -129,7 +129,7 @@ class Store:
     def begin(self):
         with self.connection() as db:
             data = self._read(db)
-            if data["status"] in {"limited", "stopped", "blocked"} or data["stop_requested"]:
+            if data["status"] in {"completed", "limited", "stopped", "blocked"} or data["stop_requested"]:
                 return False
             now = time.time()
             if data["deadline"] is None:
@@ -147,7 +147,7 @@ class Store:
     def reserve_call(self, phase, task_id=None):
         with self.connection() as db:
             data = self._read(db)
-            if data["stop_requested"] or data["status"] in {"limited", "blocked", "stopped"}:
+            if data["stop_requested"] or data["status"] in {"completed", "limited", "blocked", "stopped"}:
                 return None
             now = time.time()
             if data["deadline"] is None:
@@ -182,6 +182,8 @@ class Store:
 
     def recover_unknown(self):
         with self.connection() as db:
+            if self._read(db)["status"] == "completed":
+                return
             db.execute("UPDATE calls SET state='unknown' WHERE state IN ('reserved','running')")
             db.execute("UPDATE tasks SET state='unknown' WHERE state IN ('running','verifying')")
             data = self._read(db)
@@ -215,6 +217,37 @@ class Store:
                 raise ValueError("Unknown task")
             data = {**json.loads(row["data"]), **fields}
             db.execute("UPDATE tasks SET state=?,data=? WHERE id=?", (state, json.dumps(data), task_id))
+
+    def save_goal(self, goal, *, expected_revision):
+        """The coordinator alone writes the durable plan, with revision checks."""
+        with self.connection() as db:
+            data = self._read(db)
+            if data.get("goal", {}).get("revision", 0) != expected_revision:
+                raise RuntimeError("Goal plan revision changed")
+            if data.get("goal", {}).get("completion"):
+                raise RuntimeError("An accepted goal cannot be replanned")
+            data["goal"] = goal
+            self._save(db, data)
+
+    def complete_goal(self, expected_head, receipt, check_ref):
+        """Bind whole-goal acceptance to its exact tree, before stop or deadline."""
+        with self.connection() as db:
+            data = self._read(db)
+            if (data["stop_requested"] or data["status"] in {"blocked", "limited", "stopped", "completed"}
+                    or time.time() >= data["deadline"]):
+                return False
+            if data["accepted_head"] != expected_head:
+                raise RuntimeError("Goal acceptance base changed")
+            if (db.execute("SELECT 1 FROM calls WHERE state IN ('reserved','running','unknown') LIMIT 1").fetchone()
+                    or db.execute("SELECT 1 FROM tasks WHERE state IN ('running','verifying','unknown') LIMIT 1").fetchone()):
+                raise RuntimeError("Unsettled work prevents goal completion")
+            check_ref()
+            if time.time() >= data["deadline"]:
+                return False
+            data["goal"]["completion"] = receipt
+            data.update(status="completed", reason="goal_accepted", runner_pid=None)
+            self._save(db, data)
+            return True
 
     def integrate(self, task_id, head, previous, update_ref, **fields):
         """Linearize integration against stop. Git/SQLite crash mismatch is detected on restart."""

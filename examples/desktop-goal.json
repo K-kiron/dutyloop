@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "mode": "goal",
+  "mission": "Complete CSV import/export regression coverage for empty fields and embedded commas. Inspect the documented behavior, repair any reproducible mismatch, and stop when the explicit goal criteria are met.",
+  "goal_acceptance": [
+    "CSV import/export round trips preserve empty fields and embedded commas according to the documented format.",
+    "Regression tests cover these cases and pass with the configured verification command.",
+    "The documented public API and CSV format remain compatible."
+  ],
+  "project": "/absolute/path/to/your/repository",
+  "allowed_paths": ["src", "tests", "docs"],
+  "verification": [
+    ["python", "-B", "-m", "unittest", "discover", "-s", "tests", "-v"]
+  ],
+  "constraints": [
+    "Use the existing documented CSV behavior as the contract; report ambiguous behavior as a blocker.",
+    "Do not change credentials, dependencies, CI, security policy, or deployment configuration.",
+    "Let DutyLoop verify and create commits."
+  ],
+  "kinds": ["bugfix", "qa", "docs"],
+  "driver": {"name": "desktop"},
+  "team": {"max_workers": 3},
+  "limits": {"max_invocations": 16, "max_wall_seconds": 1800},
+  "max_plan_revisions": 2,
+  "max_task_attempts": 2,
+  "call_timeout_seconds": 600,
+  "max_changed_files": 20
+}

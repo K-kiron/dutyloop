@@ -91,6 +91,8 @@ def start_background(state_dir: Path, *, issue_batch=False, plan_only=False, rep
             "This mission cannot restart while blocked. Inspect the failure and use "
             f"{command} recover --state <same-state> --acknowledge for eligible recovery, then retry start. "
             "Recovery preserves the existing budget and deadline; not every blocked state is recoverable.")
+    if snapshot.get("status") == "completed" and snapshot.get("spec", {}).get("mode") == "goal":
+        raise ValueError("This goal has already passed acceptance; create a new mission for a new goal.")
     if snapshot.get("status") in {"stopped", "limited"} or snapshot.get("stop_requested"):
         raise ValueError("This mission cannot restart after stopping, reaching a limit, or becoming blocked.")
 
@@ -185,6 +187,10 @@ def _parser() -> argparse.ArgumentParser:
     configure.add_argument("--model")
     configure.add_argument("--max-invocations", type=int, default=12)
     configure.add_argument("--max-wall-seconds", type=float, default=1800)
+    configure.add_argument("--mode", choices=("standing", "goal"), default="standing")
+    configure.add_argument("--acceptance", action="append", help="Required goal acceptance criterion; repeat for more criteria")
+    configure.add_argument("--max-workers", type=int, help="Goal investigation worker cap (1-3)")
+    configure.add_argument("--max-plan-revisions", type=int, help="Goal planning revision cap (1-5)")
     validate = commands.add_parser("validate", help="Validate configuration read-only; do not create state or branches")
     validate.add_argument("--spec", type=Path, required=True)
     validate.add_argument("--state", type=Path, required=True)
@@ -204,6 +210,10 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--acknowledge", action="store_true")
         if name == "status":
             command.add_argument("--human", action="store_true", help="Show a compact operator summary instead of JSON")
+    resolve = commands.add_parser("resolve", help="Record an operator decision for the same finite goal")
+    resolve.add_argument("--state", type=Path, required=True)
+    resolve.add_argument("--key", required=True, help="Blocked task key, or @goal for a whole-goal planning blocker")
+    resolve.add_argument("--decision", required=True, help="Explicit operator decision text")
     events = commands.add_parser("events", help="Read ordered mission events after a durable cursor")
     events.add_argument("--state", type=Path, required=True)
     events.add_argument("--after", type=int, default=0)
@@ -285,13 +295,15 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
             return issues.resolve(arguments.state, arguments.number, arguments.decision)
     if command in {"configure", "validate", "init"}:
         from .onboarding import read_spec, validation_report, write_configuration
-    if command in {"init", "run", "start", "status", "events", "stop", "recover"}:
+    if command in {"init", "run", "start", "status", "events", "stop", "recover", "resolve"}:
         _mission_state(arguments.state)
     if command == "configure":
         return write_configuration(project=arguments.project, output=arguments.output, mission=arguments.mission,
                                    allowed_paths=arguments.allow_path, verification=arguments.verify_json,
                                    driver=arguments.driver, model=arguments.model,
-                                   max_invocations=arguments.max_invocations, max_wall_seconds=arguments.max_wall_seconds)
+                                   max_invocations=arguments.max_invocations, max_wall_seconds=arguments.max_wall_seconds,
+                                   mode=arguments.mode, goal_acceptance=arguments.acceptance,
+                                   max_workers=arguments.max_workers, max_plan_revisions=arguments.max_plan_revisions)
     if command == "validate":
         return validation_report(read_spec(arguments.spec), arguments.state)
     if command == "init":
@@ -312,6 +324,9 @@ def _dispatch(arguments: argparse.Namespace) -> dict | str | None:
         return _engine().request_stop(arguments.state)
     if command == "recover":
         return _engine().recover(arguments.state, acknowledge=arguments.acknowledge)
+    if command == "resolve":
+        from .goal_decisions import resolve
+        return resolve(arguments.state, arguments.key, arguments.decision)
     if command == "doctor":
         from .diagnostics import doctor
         return doctor(driver=arguments.driver, project=arguments.project, timeout_seconds=arguments.timeout_seconds)

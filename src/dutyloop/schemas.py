@@ -41,6 +41,47 @@ REVIEW_SCHEMA = _object({
     "findings": {"type": "array", "items": {"type": "string"}},
 })
 
+GOAL_PLAN_SCHEMA = _object({
+    "status": {"type": "string", "enum": ["work", "blocked"]},
+    "summary": {"type": "string"},
+    "investigations": {
+        "type": "array", "maxItems": 3,
+        "items": _object({
+            "key": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+            "role": {"type": "string", "minLength": 1},
+            "question": {"type": "string", "minLength": 1},
+            "paths": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        }),
+    },
+    "tasks": {
+        "type": "array", "maxItems": 24,
+        "items": _object({
+            "candidate": DISCOVERY_SCHEMA["properties"]["candidates"]["items"],
+            "depends_on": {"type": "array", "items": {"type": "string"}},
+            "blocked_reason": {"type": "string"},
+        }),
+    },
+})
+
+GOAL_INVESTIGATION_SCHEMA = _object({
+    "summary": {"type": "string"},
+    "evidence": DISCOVERY_SCHEMA["properties"]["candidates"]["items"]["properties"]["evidence"],
+    "recommendations": {"type": "array", "items": {"type": "string"}},
+})
+
+GOAL_REVIEW_SCHEMA = _object({
+    **REVIEW_SCHEMA["properties"],
+    "goal_completed": {"type": "boolean"},
+    "criteria": {
+        "type": "array",
+        "items": _object({
+            "criterion": {"type": "integer", "minimum": 1},
+            "met": {"type": "boolean"},
+            "evidence": DISCOVERY_SCHEMA["properties"]["candidates"]["items"]["properties"]["evidence"],
+        }),
+    },
+})
+
 
 def validate_payload(value, schema, path="$"):
     """Validate the JSON Schema subset used by DutyLoop's closed contracts.

@@ -68,6 +68,13 @@ def test_official_sdk_stdio_completes_a_desktop_discovery_handoff(tmp_path):
 
                 initialized = await session.initialize()
                 assert initialized.serverInfo.name == "DutyLoop"
+                assert "desktop_readiness" in initialized.instructions
+                assert "actual fresh worker" in initialized.instructions
+                readiness = await call("desktop_readiness", {"name": "maintenance", "kind": "mission"})
+                assert readiness["ready"] is False
+                assert readiness["permission_status"] == "unknown"
+                assert "mission_start" in readiness["required_tools"]
+                assert not state_root.exists()
                 created = False
                 try:
                     snapshot = await call("mission_create", {"name": "maintenance", "spec": {

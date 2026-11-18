@@ -129,6 +129,13 @@ class ControlPlane:
         self._authorized_snapshot(state)
         return _engine().request_stop(state)
 
+    def mission_resolve(self, name: str, key: str, decision: str) -> dict:
+        """Record only the operator's explicit finite-goal decision text."""
+        from .goal_decisions import resolve
+        state = self._state(name)
+        self._authorized_snapshot(state)
+        return resolve(state, key, decision)
+
     def mission_events(self, name: str, after: int = 0, limit: int = 20) -> dict:
         """Read audit events without starting, recovering or changing a mission."""
         state = self._state(name)
@@ -281,6 +288,52 @@ class ControlPlane:
         self._issues_snapshot(state)
         return issues.resolve(state, number, decision)
 
+    def desktop_readiness(self, name: str | None = None, kind: str = "mission",
+                          capabilities: dict | None = None) -> dict:
+        """Inspect the handoff contract before creation/start without changing state.
+
+        Capability declarations are host evidence, not verified permissions or
+        proof of worker isolation/termination. No host setting is changed.
+        """
+        if kind not in {"mission", "issues", "repository"}:
+            raise ValueError("kind must be issues, repository or mission")
+        if name is not None:
+            self._state(name)
+        required = {
+            "mcp_mutations": "Host permits create/start/stop and desktop claim/submit/cancel tools.",
+            "managed_worktree_access": "Workers can inspect and run tools at each returned local cwd.",
+            "fresh_worker_contexts": "Every phase uses an actual fresh worker context, including review.",
+            "spawn_workers": "The coordinator can launch real workers and retain their identities.",
+            "stop_and_join": "Workers can stop and join all tools and descendants before acknowledgement.",
+            "cancel_workers": "The coordinator can cancel workers and wait for their termination.",
+        }
+        if capabilities is None:
+            capabilities = {}
+        if (not isinstance(capabilities, dict) or set(capabilities) - set(required)
+                or any(type(value) is not bool for value in capabilities.values())):
+            raise ValueError("capabilities must contain only the documented boolean capability declarations")
+        missing = [key for key in required if capabilities.get(key) is not True]
+        permission = ("unknown" if "mcp_mutations" not in capabilities else
+                      "declared_allowed" if capabilities["mcp_mutations"] else "declared_blocked")
+        return {
+            "protocol_version": 1, "ready": not missing, "readiness_scope": "host_declaration",
+            "permission_status": permission, "capabilities": dict(capabilities),
+            "required_capabilities": required, "missing_capabilities": missing,
+            "required_tools": [f"{kind}_{action}" for action in ("create", "start", "status", "events", "stop")]
+                              + ["desktop_readiness", "desktop_next", "desktop_submit", "desktop_cancel"],
+            "host_prompt": desktop_host_prompt(name or "<name>", kind),
+            "limitations": [
+                "Host declarations do not prove permission, isolation, cancellation or process containment.",
+                "MCP annotations do not authorize blocked tools or override the host approval policy.",
+                "DutyLoop cannot create host workers, wake an idle conversation or terminate host-owned processes.",
+            ],
+            "next_action": ("Inspect the configured spec, then create/start only within existing authorization."
+                            if not missing else
+                            "Resolve missing capabilities in the host before create/start. If unavailable, "
+                            "use a supported local coding host or a configured native driver; "
+                            "preserve the current approval policy."),
+        }
+
     def _desktop_state(self, name: str, kind: str):
         state = self._state(name)
         if kind == "issues":
@@ -339,6 +392,47 @@ class ControlPlane:
         return DesktopQueue(state).cancel(request_id, token, worker_id, context_id, work_stopped)
 
 
+def desktop_host_prompt(name: str, kind: str = "mission") -> str:
+    """Generate a coordinator adaptation without claiming host capabilities."""
+    if kind not in {"mission", "issues", "repository"}:
+        raise ValueError("kind must be issues, repository or mission")
+    selected = json.dumps(name, ensure_ascii=False)
+    return (
+        f"Coordinate DutyLoop {kind} {selected}. Before creating or starting work, call "
+        f'desktop_readiness(name={selected}, kind="{kind}") and inspect all required capabilities. '
+        "Check actual host tool visibility, MCP write approval, local cwd access, fresh contexts, "
+        "worker spawning, cancellation, and stop/join support. Declare only capabilities actually "
+        "available, then call desktop_readiness again with that capabilities object. These are "
+        "self-reported host evidence, not proof. If any capability is missing or tool approval is "
+        "denied, report the exact limitation and stop before create/start; preserve the host approval policy. "
+        f"Read the operator's spec and configured authority, then use {kind}_create and {kind}_start "
+        "only as authorized. Keep this conversation as coordinator. Launch an actual fresh worker "
+        "for each request, with one phase per worker; the coordinator must not claim or implement phase work. Give "
+        "each real worker/context its own stable worker_id/context_id; changing strings in one "
+        "context does not create a new context. Each worker calls "
+        f'desktop_next(name={selected}, kind="{kind}", worker_id=<its identity>, '
+        'context_id=<its actual context>, wait_seconds=20). '
+        f"On waiting, inspect {kind}_status and continue only while the runner is active. "
+        "For a claimed request, use only its exact cwd, prompt, schema, scope and deadline. "
+        "A discover request can contain planning or investigation; a review request can review "
+        "one change or the whole goal. Always follow the supplied schema. Read-only phases must "
+        "not edit files. Implement only in the managed worktree; leave commits and delivery to "
+        "DutyLoop. Before submitting, stop and join every tool, shell and descendant started for "
+        "that request; call desktop_submit with the claiming identity, request_id, token, schema "
+        "payload, and work_stopped=true. If unable to complete, stop and join the same work, then "
+        "call desktop_cancel with the same identity and work_stopped=true. Do not reuse this "
+        "worker for another phase. Join each finished worker; its next task phase must use a "
+        "fresh context, so review never shares an implementation context. Launch pending independent "
+        "read-only investigations concurrently, with separate actual workers within the configured "
+        "team limit. Do not wait for one investigation before launching another independent one. "
+        "If the host cannot run workers concurrently, disclose that limit and service requests "
+        "serially only while their deadlines allow. "
+        f"Monitor {kind}_status and {kind}_events. Stop polling at a terminal state or an operator "
+        "decision; cancel and join remaining host workers when stopped. Keep private claim "
+        "tokens out of public artifacts. Host work_stopped declarations do not prove OS containment."
+    )
+
+
 def desktop_configuration(client: str, root: Path, projects: Iterable[Path]) -> str:
     """Render connection settings only. Never modify the host's configuration."""
     controller = ControlPlane(root, projects)
@@ -364,129 +458,156 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
     """Build the official SDK server without starting a mission or opening credentials."""
     try:
         from mcp.server.fastmcp import FastMCP
+        from mcp.types import ToolAnnotations
         from pydantic import Field
     except ImportError as error:
         raise RuntimeError("MCP support is optional; install dutyloop[mcp] to enable this command.") from error
 
     controller = ControlPlane(root, allow_projects)
-    server = FastMCP("DutyLoop")
+    server = FastMCP("DutyLoop", instructions=desktop_host_prompt("<name>"))
 
-    @server.tool()
+    # Hints describe effects for the host's approval UI. They neither grant
+    # permission nor override host approval policy. Claims and local state writes
+    # are not reads, even when they do not launch a model.
+    def hints(*, read_only=False, destructive=False, idempotent=False, open_world=False):
+        return ToolAnnotations(readOnlyHint=read_only, destructiveHint=destructive,
+                               idempotentHint=idempotent, openWorldHint=open_world)
+
+    read = hints(read_only=True, idempotent=True)
+    local_write = hints()
+    execution = hints(destructive=True, open_world=True)
+    reconciliation = hints(open_world=True)
+    recovery = hints(destructive=True)
+    remote_recovery = hints(destructive=True, open_world=True)
+    receipt = hints(idempotent=True)
+
+    @server.tool(annotations=read)
+    def desktop_readiness(name: str | None = None, kind: str = "mission",
+                          capabilities: dict[str, Any] | None = None) -> dict:
+        """Read the pre-start desktop host contract and coordinator prompt. Missing capabilities and host permissions stay unknown until explicitly declared; declarations are not proof and never change approval policy. Does not create state or launch workers."""
+        return _tool_result(lambda: controller.desktop_readiness(name, kind, capabilities))
+
+    @server.tool(annotations=local_write)
     def mission_create(name: str, spec: dict[str, Any]) -> dict:
         """Create without starting. Verification argv is authorization to execute those commands on start. Projects must exactly match the allowlist; native or desktop drivers only."""
         return _tool_result(lambda: controller.mission_create(name, spec))
 
-    @server.tool()
+    @server.tool(annotations=execution)
     def mission_start(name: str) -> dict:
         """Start a named mission in the background, including its operator-authorized verification commands."""
         return _tool_result(lambda: controller.mission_start(name))
 
-    @server.tool()
+    @server.tool(annotations=read)
     def mission_status(name: str) -> dict:
         """Read a named mission's current state without starting work."""
         return _tool_result(lambda: controller.mission_status(name))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     def mission_stop(name: str) -> dict:
         """Request asynchronous cancellation; poll status to learn whether cleanup has completed."""
         return _tool_result(lambda: controller.mission_stop(name))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
+    def mission_resolve(name: str, key: str, decision: str) -> dict:
+        """Record an explicit operator decision for a blocked finite-goal task key, or key=@goal for a whole-goal planning blocker. Preserves accepted work, budgets, deadlines, and original obligations; does not start work or override other blocks. A whole-plan blocker requires @goal before task-specific decisions. Never invent operator decisions."""
+        return _tool_result(lambda: controller.mission_resolve(name, key, decision))
+
+    @server.tool(annotations=read)
     def mission_events(name: str, after: int = 0, limit: int = 20) -> dict:
         """Read ordered audit events after a cursor without starting or recovering work."""
         return _tool_result(lambda: controller.mission_events(name, after, limit))
 
-    @server.tool()
+    @server.tool(annotations=recovery)
     def mission_recover(name: str, acknowledge: bool = False) -> dict:
         """Recover only after inspecting retained work and stopping orphaned host tools. Unknown calls stay charged."""
         return _tool_result(lambda: controller.mission_recover(name, acknowledge))
 
-    @server.tool()
+    @server.tool(annotations=reconciliation)
     def issues_create(name: str, spec: dict[str, Any]) -> dict:
         """Snapshot open issues using read-only GitHub access; default to desktop execution. Verification and optional delivery settings are operator authorization on start."""
         return _tool_result(lambda: controller.issues_create(name, spec))
 
-    @server.tool()
+    @server.tool(annotations=execution)
     def issues_start(name: str, plan_only: bool = False) -> dict:
         """Start the backlog coordinator, optionally planning only. Desktop mode waits for this host to claim and complete phases; it invokes no model CLI."""
         return _tool_result(lambda: controller.issues_start(name, plan_only))
 
-    @server.tool()
+    @server.tool(annotations=read)
     def issues_status(name: str) -> dict:
         """Read backlog progress and decisions without starting work."""
         return _tool_result(lambda: controller.issues_status(name))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     def issues_stop(name: str) -> dict:
         """Stop future backlog dispatch. The host must separately stop its own tools and subagents; active work may remain unknown."""
         return _tool_result(lambda: controller.issues_stop(name))
 
-    @server.tool()
+    @server.tool(annotations=read)
     def issues_events(name: str, after: int = 0, limit: int = 20) -> dict:
         """Read ordered issue audit events after a cursor without starting work."""
         return _tool_result(lambda: controller.issues_events(name, after, limit))
 
-    @server.tool()
+    @server.tool(annotations=remote_recovery)
     def issues_recover(name: str, acknowledge: bool = False) -> dict:
-        """Explicit read-only reconciliation after the operator inspects work and stops orphaned host tools; never replay uncertain work."""
+        """Reconcile GitHub read-only and update local recovery state after the operator inspects work and stops orphaned host tools; never replay uncertain work."""
         return _tool_result(lambda: controller.issues_recover(name, acknowledge))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     def issues_resolve(name: str, number: int, decision: str) -> dict:
         """Record an operator decision for replanning without resetting limits or publishing."""
         return _tool_result(lambda: controller.issues_resolve(name, number, decision))
 
-    @server.tool()
+    @server.tool(annotations=reconciliation)
     def repository_create(name: str, spec: dict[str, Any]) -> dict:
         """Create ongoing repository observation with read-only GitHub access; default to desktop execution and observe intake. Creation does not launch models or publish. Projects must exactly match the allowlist; custom commands are forbidden."""
         return _tool_result(lambda: controller.repository_create(name, spec))
 
-    @server.tool()
+    @server.tool(annotations=execution)
     def repository_start(name: str) -> dict:
         """Start the repository coordinator in the background. Native execution uses configured limits; desktop execution needs an active connected host and cannot wake it."""
         return _tool_result(lambda: controller.repository_start(name))
 
-    @server.tool()
+    @server.tool(annotations=read)
     def repository_status(name: str) -> dict:
         """Read repository sources, task attempts, attention, receipts and executor capability without starting or reconciling work."""
         return _tool_result(lambda: controller.repository_status(name))
 
-    @server.tool()
+    @server.tool(annotations=reconciliation)
     def repository_reconcile(name: str) -> dict:
         """Refresh repository observations using GitHub GET requests and local state only; never launch a model or publish GitHub changes."""
         return _tool_result(lambda: controller.repository_reconcile(name))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     def repository_stop(name: str) -> dict:
         """Stop future repository dispatch without resetting limits. Desktop hosts must separately stop their external tools and subagents."""
         return _tool_result(lambda: controller.repository_stop(name))
 
-    @server.tool()
+    @server.tool(annotations=read)
     def repository_events(name: str, after: int = 0, limit: int = 20) -> dict:
         """Read ordered repository audit events after a durable cursor without starting or reconciling work."""
         return _tool_result(lambda: controller.repository_events(name, after, limit))
 
-    @server.tool()
+    @server.tool(annotations=remote_recovery)
     def repository_recover(name: str, acknowledge: bool = False) -> dict:
         """Inspect retained repository work; acknowledgement requires the operator to stop orphaned tools first and never resets limits or stop authority."""
         return _tool_result(lambda: controller.repository_recover(name, acknowledge))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     def repository_resolve(name: str, number: int, decision: str) -> dict:
         """Record an operator decision for repository work without resetting limits or publishing."""
         return _tool_result(lambda: controller.repository_resolve(name, number, decision))
 
-    @server.tool()
+    @server.tool(annotations=read)
     def repository_attention(name: str) -> dict:
         """Read the structured repository attention list without reconciling or changing work."""
         return _tool_result(lambda: controller.repository_attention(name))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     def repository_set_mode(name: str, mode: str) -> dict:
         """Persist and audit observe or auto intake authority without resetting limits or a stop request. Auto permits eligible repository execution on subsequent runs."""
         return _tool_result(lambda: controller.repository_set_mode(name, mode))
 
-    @server.tool()
+    @server.tool(annotations=local_write)
     async def desktop_next(name: str, worker_id: str, context_id: str, kind: str = "issues",
                            wait_seconds: float = Field(default=0, strict=True, ge=0, le=30, allow_inf_nan=False)) -> dict:
         """Claim one desktop phase. Use wait_seconds=20 while awaiting the next phase in an active host task (0 is immediate; maximum 30). Follow its exact cwd, prompt and schema. Review needs a fresh reviewer context; IDs are self-reported. Waiting ends on work, control closure, or deadline."""
@@ -500,14 +621,14 @@ def create_server(root: Path, allow_projects: Iterable[Path]):
                 return job
             await asyncio.sleep(min(.1, remaining))
 
-    @server.tool()
+    @server.tool(annotations=receipt)
     def desktop_submit(name: str, request_id: str, token: str, worker_id: str, context_id: str,
                        payload: dict[str, Any], work_stopped: bool, kind: str = "issues") -> dict:
         """Submit structured results only after all tools/subagents for this phase have stopped. work_stopped is a cooperative host declaration, not OS containment. DutyLoop still runs acceptance checks."""
         return _tool_result(lambda: controller.desktop_submit(name, request_id, token, worker_id,
                                                               context_id, payload, work_stopped, kind))
 
-    @server.tool()
+    @server.tool(annotations=receipt)
     def desktop_cancel(name: str, request_id: str, token: str, worker_id: str, context_id: str,
                        work_stopped: bool, kind: str = "issues") -> dict:
         """Acknowledge cancellation only after stopping host tools. Retain expired/unknown work for explicit recovery; do not reassign it."""

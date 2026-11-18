@@ -63,6 +63,7 @@ supported configuration location. DutyLoop does not change it automatically.
 | `mission_events` | `name`, optional `after` and `limit` | Read event history with a cursor. |
 | `mission_stop` | `name` | Request asynchronous cancellation. |
 | `mission_recover` | `name`, `acknowledge` | Explicitly reconcile uncertain mission work. |
+| `mission_resolve` | `name`, `key`, `decision` | Record an explicit finite-goal operator decision without resetting its plan obligations or budget. |
 | `issues_create` | `name`, `spec` | Capture issue evidence and initialize a batch without model work. |
 | `issues_start` | `name` | Start the background issue runner, including configured delivery. |
 | `issues_status` | `name` | Read batch state. |
@@ -80,6 +81,13 @@ driver, not arbitrary custom-command argv. A desktop driver is exactly
 keeps the native Codex default; issue creation defaults to desktop if no driver
 is supplied. Set the driver explicitly in reusable specs. The regular
 [mission](configuration.md) and [issue](issues.md) spec contracts still apply.
+Mission specs default to continuing `mode: "standing"`. For a finite finish
+line, use `mode: "goal"` with explicit `goal_acceptance`; see
+[finite-goal configuration](configuration.md#finite-goal-acceptance). The same
+`mission_*` tools control both modes. A task decision uses its exact blocked
+key; the reserved `@goal` key resolves a whole-plan decision blocker and requests
+a bounded replan. Resolution cannot reopen completed/stopped goals or bypass
+unknown work or security blockers.
 
 A minimal tool request has this shape; replace the path and checks:
 
@@ -129,16 +137,29 @@ controls reject repository state so they cannot bypass observation policy.
 | Tool | Inputs | Effect |
 | --- | --- | --- |
 | `desktop_next` | `name`, `worker_id`, `context_id`, optional `kind`, `wait_seconds` | Claim one phase; optionally wait for work, control closure or the existing deadline. |
+| `desktop_readiness` | Optional `name`, `kind`, `capabilities` | Read required tools, self-reported host capability readiness, and a generated coordinator prompt without creating state or starting work. |
 | `desktop_submit` | `name`, `request_id`, `token`, `worker_id`, `context_id`, `payload`, `work_stopped`, optional `kind` | Validate and record the claimed request's result. |
 | `desktop_cancel` | The same claim identity and `work_stopped`, without `payload`; optional `kind` | Cancel a claimed request after host work has ended. |
 
-`kind` defaults to `issues`; use `mission` for standing missions. Requests
+Before desktop creation/start, call `desktop_readiness` and inspect its
+`required_tools`, `required_capabilities`, and `host_prompt`. Declare only
+capabilities actually available in the host. `ready: true` is a host declaration,
+not proof of permissions, worker isolation, cancellation, or process containment.
+Missing capabilities or denied tool approval require stopping before create/start;
+preserve the existing host permission policy. See the
+[readiness contract](desktop.md#check-host-readiness-before-starting).
+
+`kind` defaults to `issues`; use `mission` for standing and finite-goal missions. Requests
 provide `request_id`, `token`, `phase`, `prompt`, `cwd`, `schema`, `deadline`,
 and `output_dir`. Work at the exact managed `cwd`, preserve the claiming
 identity, and submit only a payload matching that request's schema. Complete or
 stop all phase shells, tasks, and subagents before declaring
 `work_stopped: true`. Review needs a fresh host context, not a renamed identity
 in the implementation context. See the [desktop contract](desktop.md#phase-contract).
+Use fresh actual workers for every phase; launch independent read-only
+investigations concurrently within the configured cap. If the host cannot do
+that, disclose the limitation and service them serially only within their
+existing deadlines. Implementation and acceptance remain serial.
 
 `wait_seconds` defaults to `0`; active workers should use `20` to avoid repeated
 empty tool calls. It accepts finite numbers from `0` to `30`. The bounded wait
@@ -159,6 +180,8 @@ its verification argv, project scripts, host tools, and hooks execute with the
 runner's environment authority. Issue start also authorizes configured GitHub
 delivery: local by default, with publication and merge separately configured.
 Restrict which clients can use this server and which projects they can control.
+MCP tool annotations are client-facing hints about an operation; they do not
+authorize host actions, grant missing permissions, or override a denied approval.
 
 MCP project allowlisting is a control-plane boundary. It is not a filesystem,
 network, or credential sandbox for child processes. State and tool responses can

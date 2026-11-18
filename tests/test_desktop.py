@@ -219,8 +219,10 @@ def test_unclaimed_deadline_is_clean_and_never_exposed(running, phase):
 
 def test_claimed_deadline_quarantines_and_rejects_late_result(running):
     queue, start = running
-    future, request, _stop = start(timeout=.15)
+    future, request, _stop = start()
     job = claim(queue)
+    with queue._connection() as db:
+        db.execute("UPDATE requests SET deadline=? WHERE request_id=?", (time.time() - 1, job["request_id"]))
     result = future.result(timeout=2)
     assert result.timed_out and not result.cleanup_confirmed
     assert result.cleanup_scope == "host_declaration"
