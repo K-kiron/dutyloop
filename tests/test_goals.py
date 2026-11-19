@@ -76,6 +76,135 @@ def test_goal_stops_on_verified_acceptance_without_more_discovery(goal):
     assert (project / "app.py").read_text() == "value = 0\n"
 
 
+@pytest.mark.parametrize("repair_value", [1, 2, 0])
+def test_repair_handoff_keeps_current_tree_checks_and_independent_review(goal, repair_value):
+    project, state, spec = goal
+    spec["max_task_attempts"] = 2
+    initialize(spec, state)
+    requests = []
+    review_trees = []
+
+    class Repair(GoalWorker):
+        def run(self, request, should_stop):
+            requests.append((request.phase, request.cwd, json.loads(request.prompt.split("\n")[-1])))
+            result = super().run(request, should_stop)
+            if request.phase == "implement" and self.phases.count("implement") == 2:
+                (request.cwd / "app.py").write_text(f"value = {repair_value}\n# Checked repair\n", encoding="utf-8")
+            if request.phase == "review":
+                review_trees.append(subprocess.check_output(
+                    ["git", "-C", str(request.cwd), "write-tree"], text=True).strip())
+                if self.phases.count("review") == 1 or repair_value != 1:
+                    result.payload.update(accepted=False, goal_completed=False,
+                                          findings=["The required regression case is missing"])
+                else:
+                    result.payload["goal_completed"] = True
+                    result.payload["criteria"][0]["met"] = True
+            return result
+
+    result = run(state, driver=Repair())
+    expected = ["discover", "implement", "review", "implement"] + (["review"] if repair_value else [])
+    assert [row[0] for row in requests] == expected
+    assert requests[1][1] == requests[3][1]
+    repair = requests[3][2]["previous_review"]
+    assert repair["tree"] == review_trees[0]
+    assert repair["scope"]["accepted_head"] == subprocess.check_output(
+        ["git", "-C", str(project), "rev-parse", "HEAD"], text=True).strip()
+    assert repair["scope"]["goal_revision"] == 1
+    assert repair["review"]["accepted"] is False
+    checks = [event for event in Store(state).events() if event["kind"] == "verification"]
+    assert len(checks) == 2
+    if repair_value == 0:
+        assert checks[-1]["data"]["passed"] is False
+        assert result["tasks"][0]["commit_sha"] is None
+        assert not result["goal"]["completion"]
+        return
+    review = requests[4][2]
+    assert review["previous_review"] == repair
+    assert review["checked_tree"] == review_trees[1] != review_trees[0]
+    assert "Checked repair" in review["repair_diff"]
+    assert "-value = 0" in review["staged_diff"]
+    assert review["operator_checks"][0]["returncode"] == 0
+    assert review["authority"]["goal_acceptance"] == [{"criterion": 1, "requirement": spec["goal_acceptance"][0]}]
+    assert not review["authority"]["past_tasks"]
+    assert "candidate" not in review["authority"]["goal_plan"]["tasks"][0]
+    assert review["task"]["acceptance"] == ["Value equals 1"]
+    task = result["tasks"][0]
+    if repair_value == 1:
+        assert result["status"] == "completed"
+        assert task["verified_tree"] == review_trees[-1]
+    else:
+        assert task["commit_sha"] is None
+        assert not result["goal"]["completion"]
+
+
+def test_historical_review_is_not_reused_after_operator_decision_changes(goal):
+    _, state, spec = goal
+    spec["max_task_attempts"] = 2
+    initialize(spec, state)
+    requests = []
+
+    class NewDecision(GoalWorker):
+        def run(self, request, should_stop):
+            requests.append(json.loads(request.prompt.split("\n")[-1]))
+            result = super().run(request, should_stop)
+            if request.phase == "review" and self.phases.count("review") == 1:
+                result.payload.update(accepted=False, goal_completed=False, findings=["Clarify the expected value"])
+                # Simulate an authority update after this review was dispatched.
+                store = Store(state)
+                with store.connection() as db:
+                    data = store._read(db)
+                    data["goal"]["decisions_at"] = 1
+                    data["goal"]["operator_decision"] = "Keep the requested value at one"
+                    store._save(db, data)
+            return result
+
+    worker = NewDecision()
+    result = run(state, driver=worker)
+    assert result["status"] == "completed"
+    assert worker.phases == ["discover", "implement", "review", "implement", "review"]
+    for prompt in requests[3:]:
+        assert prompt["previous_review"] is None
+        assert "Clarify the expected value" not in json.dumps(prompt)
+        assert prompt["authority"]["operator_decisions"]["goal"] == "Keep the requested value at one"
+    assert requests[-1]["repair_diff"] is None
+    assert "-value = 0" in requests[-1]["staged_diff"]
+    assert "Clarify the expected value" in result["tasks"][0]["feedback"][0]
+
+
+def test_scoped_context_preserves_other_tasks_investigations_and_all_authority(goal):
+    from dutyloop.goals import GoalSupervisor
+
+    _, state, spec = goal
+    spec["goal_acceptance"].append("Existing behavior remains intact")
+    initialize(spec, state)
+    store = Store(state)
+    store.begin()
+    selected = {"candidate": candidate(), "depends_on": ["foundation"], "blocked_reason": "Choose policy",
+                "decision": "Keep the documented policy"}
+    other = {"candidate": candidate("foundation", 2), "depends_on": [], "blocked_reason": ""}
+    investigation = {"key": "compatibility", "state": "finished", "result": {
+        "payload": {"findings": ["Existing consumers require the documented behavior"]}}}
+    plan = {"revision": 1, "tasks": [selected, other], "investigations": [investigation],
+            "operator_decision": "Preserve compatibility", "decisions_at": 1}
+    store.save_goal(plan, expected_revision=0)
+    task_id = store.add_task(selected["candidate"], state / "unused-worktree", store.control()["accepted_head"])
+    store.update_task(task_id, "running", feedback=["Current task feedback"])
+    supervisor = GoalSupervisor(store, None, threading.Event())
+    prompt = json.loads(supervisor.prompt("Review", task=selected["candidate"], feedback=["Current task feedback"]).split("\n")[-1])
+    authority = prompt["authority"]
+    assert prompt["task"] == selected["candidate"]
+    assert authority["goal_plan"]["tasks"][0] == {"task_key": "correct-value", **{k: v for k, v in selected.items() if k != "candidate"}}
+    assert authority["goal_plan"]["tasks"][1] == other
+    assert authority["goal_plan"]["investigations"] == [investigation]
+    assert [row["requirement"] for row in authority["goal_acceptance"]] == spec["goal_acceptance"]
+    assert authority["operator_decisions"] == {"goal": "Preserve compatibility", "tasks": {"correct-value": selected["decision"]}}
+    assert authority["operator_verification"] == spec["verification"]
+    assert authority["allowed_paths"] == spec["allowed_paths"]
+    assert not authority["past_tasks"]
+    assert store.control()["goal"] == plan
+    assert supervisor.context()["goal_plan"]["tasks"] == [selected, other]
+
+
 def test_goal_persists_dependency_queue_without_replanning_each_task(goal):
     _, state, spec = goal
     tasks = [{"candidate": candidate("second-step", 2), "depends_on": ["first-step"], "blocked_reason": ""},

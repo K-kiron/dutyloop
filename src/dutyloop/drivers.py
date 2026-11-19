@@ -153,7 +153,8 @@ class _Driver:
                     schema_path.write_text(json.dumps(request.schema), encoding="utf-8")
                     sandbox = "workspace-write" if request.phase == "implement" else "read-only"
                     argv += ["exec", "--json", "--ephemeral", "-C", str(request.cwd), "-s", sandbox,
-                             "-c", 'approval_policy="never"', "--output-schema", str(schema_path),
+                             "-c", 'approval_policy="never"', "-c", "features.multi_agent=false",
+                             "--output-schema", str(schema_path),
                              "--output-last-message", str(final_path)]
                     if model:
                         argv += ["--model", model]

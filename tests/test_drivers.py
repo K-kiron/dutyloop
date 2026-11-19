@@ -63,6 +63,19 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(result.usage, {})
         self.assertIsNone(result.cost_usd)
 
+    def test_codex_workers_disable_nested_fanout_without_changing_phase_permissions(self):
+        for phase in ("discover", "implement", "review"):
+            with self.subTest(phase=phase):
+                self.request.phase = phase
+                result, invocation = self.native("codex", self.codex_events(), returncode=0)
+                self.assertIsNone(result.error)
+                self.assertIn("features.multi_agent=false", invocation["argv"])
+                sandbox = "workspace-write" if phase == "implement" else "read-only"
+                self.assertEqual(invocation["argv"][invocation["argv"].index("-s") + 1], sandbox)
+                self.assertIn('approval_policy="never"', invocation["argv"])
+                self.assertTrue(result.cleanup_confirmed)
+                self.assertIsNone(result.cost_usd)
+
     def test_codex_final_file_is_parsed_without_scraping_prose(self):
         def fake_run(argv, **kwargs):
             final = Path(argv[argv.index("--output-last-message") + 1])

@@ -22,15 +22,21 @@ class GoalSupervisor(Supervisor):
     def stopped(self):
         return super().stopped() or self.store.control()["status"] == "blocked"
 
-    def context(self):
-        context = super().context()
+    def context(self, *, task_key=None):
+        context = super().context(task_key=task_key)
         goal = self.store.control().get("goal", {})
+        plan = {key: value for key, value in goal.items() if key not in {"history", "completion"}}
+        if task_key is not None:
+            # The selected candidate is already supplied in full at prompt.task.
+            # Keep all other tasks, blockers, dependencies and investigation evidence.
+            plan["tasks"] = [{**{k: v for k, v in node.items() if k != "candidate"}, "task_key": task_key}
+                             if node["candidate"]["key"] == task_key else node for node in goal.get("tasks", [])]
         context.update(
             goal_acceptance=[{"criterion": index, "requirement": value}
                              for index, value in enumerate(self.spec["goal_acceptance"], 1)],
             remaining_invocations=self.store.available_calls(),
             max_investigators=self.spec["team"]["max_workers"],
-            goal_plan={key: value for key, value in goal.items() if key not in {"history", "completion"}},
+            goal_plan=plan,
             operator_decisions={"goal": goal.get("operator_decision"),
                                 "tasks": {node["candidate"]["key"]: node["decision"]
                                           for node in goal.get("tasks", []) if node.get("decision")}},

@@ -165,8 +165,11 @@ consume invocation reservations; model usage and cost remain unknown.
 For standing mode, use one discovery worker initially. Each worker consumes an invocation, including
 when it returns no useful candidate. A larger discovery team is not an
 implementation team, and no effectiveness gain has been established at equal
-budget. A host may create subagents internally; the outer invocation budget does
-not separately count those activities.
+budget. Native Codex phase processes disable nested `multi_agent` through a
+per-invocation override; this does not change global host configuration or
+DutyLoop's parallel discovery and goal investigations. Other hosts may create
+subagents internally; the outer invocation budget does not separately count
+those activities.
 
 Custom command drivers are available through CLI mission initialization. MCP
 creation/start accepts native adapters and desktop, excluding custom commands.
@@ -190,6 +193,30 @@ implementer to repair host access. Explicit transient errors and clean deadlines
 can use the bounded retry policy for managed calls. An expired claimed desktop
 request has unknown external cleanup and requires inspection and explicit
 recovery; it is not automatically reassigned.
+
+### Phase context and repair handoffs
+
+Workers begin with the selected task's evidence and configured checks, then
+inspect the current files and applicable project instructions. Prompt context
+removes only duplicate copies of the current task candidate and feedback;
+unrelated goal tasks and investigations remain available. Mission constraints,
+scope, every goal criterion, and operator decisions retain their authority.
+
+A repair attempt retains the existing task worktree. After a rejected review,
+the supervisor supplies the prior review bound to the accepted base and reviewed
+tree, plus the goal plan revision and operator-decision timestamp where
+applicable. If the accepted base, goal revision or decision timestamp changes,
+the structured handoff and repair delta are discarded. Superseded review text
+remains in the audit history but is not repeated in the task's feedback prompt. Historical
+findings and checks are navigation aids, never proof about the repaired tree.
+
+The next independent review receives the repair diff (when within the review
+size limit) alongside the complete staged diff, every acceptance criterion, and fresh operator-check results for
+the current staged tree. It must inspect current evidence and may reject new or
+remaining problems; a previous favorable finding does not waive any criterion.
+Snapshot checks, invocation reservations, stop and cleanup rules, and integration
+gates still apply. These handoffs do not establish an elapsed-time improvement;
+that requires a separately recorded live comparison.
 
 Budget exhaustion can interrupt a task before implementation, checking, or review
 finishes. DutyLoop leaves room for an implementation and its review before

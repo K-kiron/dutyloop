@@ -62,6 +62,8 @@ within the same persistent budget.
 
 You define the responsibility and acceptance commands once. DutyLoop manages the worktrees, phase reservations, staged-snapshot checks, review, and durable state. Use your current local desktop coding agent through MCP, or select a native coding CLI adapter.
 
+Workers start from task evidence and configured checks. Repairs keep the task worktree and receive a snapshot-bound prior review; the next independent reviewer receives both the repair diff and complete staged diff, every criterion, and fresh operator checks. Historical handoffs guide inspection and never establish acceptance. Native Codex phases disable nested `multi_agent` per invocation while preserving DutyLoop's parallel investigations. See [phase handoffs](docs/configuration.md#phase-context-and-repair-handoffs) for the context and validity rules.
+
 | Capability | What it gives you |
 | --- | --- |
 | **Ongoing discovery** | One to three workers inspect current evidence and propose tasks with acceptance criteria. |
